@@ -53,14 +53,13 @@ Earnings History:
 
 ## Installation
 
+Navigate to your node directory defalt being ceremonyclient/node
 1. Download the script directly to your node directory:
 ```bash
-cd /path/to/your/node/directory
 curl -O https://raw.githubusercontent.com/wolfcubecho/quil-monitor/main/quil_monitor.py && chmod +x quil_monitor.py
 ```
 or using wget:
 ```bash
-cd /path/to/your/node/directory
 wget https://raw.githubusercontent.com/wolfcubecho/quil-monitor/main/quil_monitor.py && chmod +x quil_monitor.py
 ```
 
