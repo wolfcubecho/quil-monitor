@@ -51,10 +51,17 @@ Earnings History:
 
 ## Installation
 
-1. Clone the repository:
+## Installation
+
+1. Download the script directly to your node directory:
 ```bash
-git clone https://github.com/yourusername/quil-monitor.git
-cd quil-monitor
+cd /path/to/your/node/directory
+curl -O https://raw.githubusercontent.com/wolfcubecho/quil-monitor/main/quil_monitor.py
+```
+or using wget:
+```bash
+cd /path/to/your/node/directory
+wget https://raw.githubusercontent.com/wolfcubecho/quil-monitor/main/quil_monitor.py
 ```
 
 2. Install required package:
@@ -62,11 +69,12 @@ cd quil-monitor
 sudo pip3 install requests
 ```
 
-3. Place the script in your QUIL node directory (where your node binary is located)
+3. Make the script executable:
+```bash
+chmod +x quil_monitor.py
+```
 
-## Usage
-
-Run the script with sudo (required for accessing node logs):
+4. Run the script:
 ```bash
 sudo python3 quil_monitor.py
 ```
