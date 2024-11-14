@@ -56,12 +56,12 @@ Earnings History:
 1. Download the script directly to your node directory:
 ```bash
 cd /path/to/your/node/directory
-curl -O https://raw.githubusercontent.com/wolfcubecho/quil-monitor/main/quil_monitor.py
+curl -O https://raw.githubusercontent.com/wolfcubecho/quil-monitor/main/quil_monitor.py && chmod +x quil_monitor.py
 ```
 or using wget:
 ```bash
 cd /path/to/your/node/directory
-wget https://raw.githubusercontent.com/wolfcubecho/quil-monitor/main/quil_monitor.py
+wget https://raw.githubusercontent.com/wolfcubecho/quil-monitor/main/quil_monitor.py && chmod +x quil_monitor.py
 ```
 
 2. Install required package:
@@ -69,12 +69,7 @@ wget https://raw.githubusercontent.com/wolfcubecho/quil-monitor/main/quil_monito
 sudo pip3 install requests
 ```
 
-3. Make the script executable:
-```bash
-chmod +x quil_monitor.py
-```
-
-4. Run the script:
+3. Run the script:
 ```bash
 sudo python3 quil_monitor.py
 ```
