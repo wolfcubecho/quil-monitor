@@ -125,12 +125,6 @@ Contributions are welcome! Feel free to submit Issues or Pull Requests.
 
 This project is licensed under the MIT License - see the LICENSE file for details.
 
-## Acknowledgments
-
-- QUIL community for testing and feedback
-- CoinGecko for price data
-- Ceremonyclient service developers
-
 ## Security Note
 
 This script requires sudo access to read node logs. Always review scripts requiring elevated privileges before running them.
