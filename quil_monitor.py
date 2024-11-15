@@ -51,8 +51,8 @@ class QuilNodeMonitor:
                 with open(self.log_file, 'r') as f:
                     return json.load(f)
             except:
-                return {'daily_balance': {}, 'shard_metrics': {}}
-        return {'daily_balance': {}, 'shard_metrics': {}}
+                return {'balances': {}, 'shard_metrics': {}}
+        return {'balances': {}, 'shard_metrics': {}}
 
     def _save_history(self):
         try:
@@ -96,7 +96,6 @@ class QuilNodeMonitor:
                 else:
                     active_workers = 1024
             except Exception as e:
-                print(f"Warning: Could not get worker count: {e}")
                 active_workers = 1024
 
             owned_balance_match = re.search(r'Owned balance: ([\d.]+) QUIL', result.stdout)
@@ -116,108 +115,130 @@ class QuilNodeMonitor:
             print(f"Error getting node info: {e}")
             return None
 
-    def get_calendar_day_metrics(self, days_ago=0):
+    def get_shard_metrics(self, date=None):
+        if date is None:
+            date = datetime.now().strftime('%Y-%m-%d')
+        
         try:
-            target_date = datetime.now() - timedelta(days=days_ago)
-            start_time = target_date.replace(hour=0, minute=0, second=0, microsecond=0)
-            end_time = start_time + timedelta(days=1)
-
-            cmd = f'journalctl -u ceremonyclient.service --since "{start_time.strftime("%Y-%m-%d %H:%M:%S")}" --until "{end_time.strftime("%Y-%m-%d %H:%M:%S")}" --no-hostname -o cat | grep -i shard'
+            cmd = f'journalctl -u ceremonyclient.service --since "{date} 00:00:00" --until "{date} 23:59:59" --no-hostname -o cat | grep -i shard'
             result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
             
-            shard_times = []
-            prev_frame = None
-            prev_time = None
-            frame_numbers = set()
-            frame_ages = []
-            
+            shards = []
             for line in result.stdout.splitlines():
                 try:
                     data = json.loads(line)
-                    frame_number = data.get('frame_number')
                     timestamp = data.get('ts')
-                    frame_age = data.get('frame_age', 0)
-                    
-                    frame_numbers.add(frame_number)
-                    frame_ages.append(frame_age)
-                    
-                    if prev_frame is not None and prev_time is not None:
-                        time_diff = timestamp - prev_time
-                        shard_times.append(time_diff)
-                    
-                    prev_frame = frame_number
-                    prev_time = timestamp
+                    if timestamp:
+                        shards.append({
+                            'timestamp': timestamp,
+                            'frame_age': data.get('frame_age', 0),
+                            'frame_number': data.get('frame_number', 0)
+                        })
                 except:
                     continue
             
+            # Calculate metrics
+            total_shards = len(shards)
+            if total_shards > 0:
+                current_time = datetime.now()
+                if date == current_time.strftime('%Y-%m-%d'):
+                    # For today, calculate hourly rate based on current time
+                    hours_passed = current_time.hour + current_time.minute / 60
+                    shards_per_hour = total_shards / (hours_passed if hours_passed > 0 else 1)
+                else:
+                    # For past days, use 24 hours
+                    shards_per_hour = total_shards / 24
+                    
+                avg_frame_age = sum(s['frame_age'] for s in shards) / total_shards
+            else:
+                shards_per_hour = 0
+                avg_frame_age = 0
+            
             return {
-                'date': start_time.strftime('%Y-%m-%d'),
-                'unique_frames': len(frame_numbers),
-                'total_entries': len(shard_times) + 1,
-                'avg_time': sum(shard_times) / len(shard_times) if shard_times else 0,
-                'avg_frame_age': sum(frame_ages) / len(frame_ages) if frame_ages else 0,
-                'min_frame_age': min(frame_ages) if frame_ages else 0,
-                'max_frame_age': max(frame_ages) if frame_ages else 0,
-                'total_shards': len(frame_numbers)
+                'date': date,
+                'total_shards': total_shards,
+                'shards_per_hour': shards_per_hour,
+                'avg_frame_age': avg_frame_age
             }
         except Exception as e:
-            print(f"Error getting metrics for {target_date.strftime('%Y-%m-%d')}: {e}")
             return {
-                'date': target_date.strftime('%Y-%m-%d'),
-                'unique_frames': 0,
-                'total_entries': 0,
-                'avg_time': 0,
-                'avg_frame_age': 0,
-                'min_frame_age': 0,
-                'max_frame_age': 0,
-                'total_shards': 0
+                'date': date,
+                'total_shards': 0,
+                'shards_per_hour': 0,
+                'avg_frame_age': 0
             }
 
-    def update_metrics(self):
-        today = datetime.now().strftime('%Y-%m-%d')
-        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    def update_balance_history(self, current_balance, timestamp=None):
+        if timestamp is None:
+            timestamp = datetime.now()
         
-        node_info = self.get_node_info()
-        if node_info is not None:
-            current_balance = node_info['owned']
-            self.history['daily_balance'][today] = current_balance
-            
-            if yesterday not in self.history['daily_balance']:
-                self.history['daily_balance'][yesterday] = current_balance - 0.1
+        date = timestamp.strftime('%Y-%m-%d')
+        if date not in self.history['balances']:
+            self.history['balances'][date] = []
         
-        metrics = {
-            'today': self.get_calendar_day_metrics(0),
-            'yesterday': self.get_calendar_day_metrics(1),
-            'last_7_days': [self.get_calendar_day_metrics(i) for i in range(7)]
-        }
-        
-        self.history['shard_metrics'][today] = metrics['today']
+        self.history['balances'][date].append({
+            'timestamp': timestamp.timestamp(),
+            'balance': current_balance
+        })
         
         self._save_history()
-        return node_info, metrics
+
+    def get_balance_at_time(self, date, time="23:59:59"):
+        try:
+            if date not in self.history['balances']:
+                return None
+            
+            balances = self.history['balances'][date]
+            if not balances:
+                return None
+                
+            return balances[-1]['balance']
+        except Exception as e:
+            return None
+
+    def get_earnings(self, date):
+        try:
+            current_balance = self.get_node_info()['owned']
+            self.update_balance_history(current_balance)
+            
+            prev_date = (datetime.strptime(date, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d')
+            prev_balance = self.get_balance_at_time(prev_date)
+            
+            if prev_balance is not None:
+                if date == datetime.now().strftime('%Y-%m-%d'):
+                    return current_balance - prev_balance
+                else:
+                    end_balance = self.get_balance_at_time(date)
+                    return end_balance - prev_balance if end_balance is not None else 0
+            return 0
+        except Exception as e:
+            return 0
 
     def display_stats(self):
         print("\n=== QUIL Node Statistics ===")
         print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         
-        node_info, metrics = self.update_metrics()
+        node_info = self.get_node_info()
         quil_price = self.get_quil_price()
         
-        balances = [(date, bal) for date, bal in self.history['daily_balance'].items()]
-        balances.sort(reverse=True)
+        # Calculate averages from earnings history
+        earnings_list = []
+        total_weekly = 0
+        total_monthly = 0
         
-        weekly_avg = monthly_avg = daily_avg = 0
-        current_balance = next(iter(balances))[1] if balances else 0
+        for i in range(30):  # Get last 30 days for monthly average
+            date = (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d')
+            daily_earn = self.get_earnings(date)
+            earnings_list.append(daily_earn)
+            
+            if i < 7:  # Last 7 days for weekly
+                total_weekly += daily_earn
+            total_monthly += daily_earn
         
-        if len(balances) >= 2:
-            total_days = min(7, len(balances) - 1)
-            if total_days > 0:
-                oldest_balance_within_range = balances[total_days][1]
-                total_earn = current_balance - oldest_balance_within_range
-                daily_avg = total_earn / total_days
-                weekly_avg = daily_avg * 7
-                monthly_avg = daily_avg * 30
-
+        daily_avg = total_weekly / 7 if earnings_list else 0
+        weekly_avg = total_weekly
+        monthly_avg = total_monthly
+        
         if node_info:
             print(f"\nNode Information:")
             print(f"Ring:            {node_info['ring']}")
@@ -227,25 +248,24 @@ class QuilNodeMonitor:
             print(f"Weekly Average:  {weekly_avg:.6f} QUIL // ${weekly_avg * quil_price:.2f}")
             print(f"Monthly Average: {monthly_avg:.6f} QUIL // ${monthly_avg * quil_price:.2f}")
             print(f"Daily Average:   {daily_avg:.6f} QUIL // ${daily_avg * quil_price:.2f}")
+        
+        # Get today's metrics
+        today = datetime.now().strftime('%Y-%m-%d')
+        today_metrics = self.get_shard_metrics(today)
+        today_earnings = self.get_earnings(today)
+        
+        print(f"\nToday's Stats ({today}):")
+        print(f"Earnings:        {today_earnings:.6f} QUIL // ${today_earnings * quil_price:.2f}")
+        print(f"Total Shards:    {today_metrics['total_shards']}")
+        print(f"Shards/Hour:     {today_metrics['shards_per_hour']:.2f}")
+        print(f"Avg Frame Age:   {today_metrics['avg_frame_age']:.2f} seconds")
 
-        if len(balances) >= 2:
-            latest_balance = balances[0][1]
-            prev_balance = balances[1][1] if len(balances) > 1 else latest_balance
-            daily_earn = latest_balance - prev_balance
-            
-            today_data = metrics['today']
-            print(f"\nToday's Stats ({datetime.now().strftime('%Y-%m-%d')}):")
-            print(f"Earnings:        {daily_earn:.6f} QUIL // ${daily_earn * quil_price:.2f}")
-            print(f"Total Shards:    {today_data['total_shards']}")
-            print(f"Avg Time Between: {today_data['avg_time']:.2f} seconds")
-            print(f"Avg Frame Age:    {today_data['avg_frame_age']:.2f} seconds")
-
-            print("\nEarnings History:")
-            for i in range(len(balances)-1):
-                if i >= 7: break
-                date = balances[i][0]
-                daily_earn = balances[i][1] - balances[i+1][1] if i+1 < len(balances) else 0
-                print(f"{date}: {daily_earn:.6f} QUIL // ${daily_earn * quil_price:.2f}")
+        # Show last 7 days - just earnings
+        print("\nEarnings History:")
+        for i in range(7):
+            date = (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d')
+            daily_earn = self.get_earnings(date)
+            print(f"{date}: {daily_earn:.6f} QUIL // ${daily_earn * quil_price:.2f}")
 
 if __name__ == "__main__":
     check_sudo()
