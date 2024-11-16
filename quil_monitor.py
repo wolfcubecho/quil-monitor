@@ -9,8 +9,7 @@ import sys
 
 def check_sudo():
     if os.geteuid() != 0:
-        print("This script requires sudo privileges to access node info and logs.")
-        print("Please run with: sudo python3 quil_monitor.py")
+        print("This script requires sudo privileges")
         sys.exit(1)
 
 class QuilNodeMonitor:
@@ -51,8 +50,8 @@ class QuilNodeMonitor:
                 with open(self.log_file, 'r') as f:
                     return json.load(f)
             except:
-                return {'balances': {}, 'shard_metrics': {}}
-        return {'balances': {}, 'shard_metrics': {}}
+                return {'daily_balance': {}, 'shard_metrics': {}}
+        return {'daily_balance': {}, 'shard_metrics': {}}
 
     def _save_history(self):
         try:
@@ -72,7 +71,6 @@ class QuilNodeMonitor:
             data = response.json()
             return data.get("wrapped-quil", {}).get("usd", 0)
         except Exception as e:
-            print(f"Error getting QUIL price: {e}")
             return 0
 
     def get_node_info(self):
@@ -81,35 +79,24 @@ class QuilNodeMonitor:
                                  capture_output=True, text=True)
             
             if result.returncode != 0:
-                print(f"Error running node info command: {result.stderr}")
                 return None
 
             ring_match = re.search(r'Prover Ring: (\d+)', result.stdout)
             ring = int(ring_match.group(1)) if ring_match else 0
 
-            try:
-                workers_cmd = 'journalctl -u ceremonyclient.service --since "1 minute ago" --no-hostname -o cat | grep -i shard | tail -n 1'
-                workers_result = subprocess.run(workers_cmd, shell=True, capture_output=True, text=True)
-                if workers_result.stdout.strip():
-                    workers_data = json.loads(workers_result.stdout.strip())
-                    active_workers = workers_data.get('active_workers', 0)
-                else:
-                    active_workers = 1024
-            except Exception as e:
-                active_workers = 1024
-
             owned_balance_match = re.search(r'Owned balance: ([\d.]+) QUIL', result.stdout)
             owned_balance = float(owned_balance_match.group(1)) if owned_balance_match else 0
 
-            bridged_balance_match = re.search(r'Bridged balance: ([\d.]+) QUIL', result.stdout)
-            bridged_balance = float(bridged_balance_match.group(1)) if bridged_balance_match else 0
+            date = datetime.now().strftime('%Y-%m-%d')
+            self.history['daily_balance'][date] = owned_balance
+            self._save_history()
 
             return {
                 'ring': ring,
-                'active_workers': active_workers,
+                'active_workers': 1024,
                 'owned': owned_balance,
-                'bridged': bridged_balance,
-                'total': owned_balance + bridged_balance
+                'bridged': 0,
+                'total': owned_balance
             }
         except Exception as e:
             print(f"Error getting node info: {e}")
@@ -131,22 +118,18 @@ class QuilNodeMonitor:
                     if timestamp:
                         shards.append({
                             'timestamp': timestamp,
-                            'frame_age': data.get('frame_age', 0),
-                            'frame_number': data.get('frame_number', 0)
+                            'frame_age': data.get('frame_age', 0)
                         })
                 except:
                     continue
             
-            # Calculate metrics
             total_shards = len(shards)
             if total_shards > 0:
                 current_time = datetime.now()
                 if date == current_time.strftime('%Y-%m-%d'):
-                    # For today, calculate hourly rate based on current time
                     hours_passed = current_time.hour + current_time.minute / 60
                     shards_per_hour = total_shards / (hours_passed if hours_passed > 0 else 1)
                 else:
-                    # For past days, use 24 hours
                     shards_per_hour = total_shards / 24
                     
                 avg_frame_age = sum(s['frame_age'] for s in shards) / total_shards
@@ -168,70 +151,44 @@ class QuilNodeMonitor:
                 'avg_frame_age': 0
             }
 
-    def update_balance_history(self, current_balance, timestamp=None):
-        if timestamp is None:
-            timestamp = datetime.now()
-        
-        date = timestamp.strftime('%Y-%m-%d')
-        if date not in self.history['balances']:
-            self.history['balances'][date] = []
-        
-        self.history['balances'][date].append({
-            'timestamp': timestamp.timestamp(),
-            'balance': current_balance
-        })
-        
-        self._save_history()
-
-    def get_balance_at_time(self, date, time="23:59:59"):
+    def get_daily_earnings(self, date):
         try:
-            if date not in self.history['balances']:
-                return None
+            yesterday = (datetime.strptime(date, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d')
             
-            balances = self.history['balances'][date]
-            if not balances:
-                return None
+            if yesterday not in self.history['daily_balance']:
+                return 0
                 
-            return balances[-1]['balance']
-        except Exception as e:
-            return None
-
-    def get_earnings(self, date):
-        try:
-            current_balance = self.get_node_info()['owned']
-            self.update_balance_history(current_balance)
-            
-            prev_date = (datetime.strptime(date, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d')
-            prev_balance = self.get_balance_at_time(prev_date)
-            
-            if prev_balance is not None:
+            if date not in self.history['daily_balance']:
                 if date == datetime.now().strftime('%Y-%m-%d'):
-                    return current_balance - prev_balance
+                    current_balance = self.get_node_info()['owned']
                 else:
-                    end_balance = self.get_balance_at_time(date)
-                    return end_balance - prev_balance if end_balance is not None else 0
-            return 0
+                    return 0
+            else:
+                current_balance = self.history['daily_balance'][date]
+            
+            yesterday_balance = self.history['daily_balance'][yesterday]
+            return current_balance - yesterday_balance
         except Exception as e:
             return 0
 
     def display_stats(self):
         print("\n=== QUIL Node Statistics ===")
-        print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        current_time = datetime.now()
+        print(f"Time: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
         
         node_info = self.get_node_info()
         quil_price = self.get_quil_price()
         
-        # Calculate averages from earnings history
         earnings_list = []
         total_weekly = 0
         total_monthly = 0
         
-        for i in range(30):  # Get last 30 days for monthly average
-            date = (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d')
-            daily_earn = self.get_earnings(date)
+        for i in range(30):
+            date = (current_time - timedelta(days=i)).strftime('%Y-%m-%d')
+            daily_earn = self.get_daily_earnings(date)
             earnings_list.append(daily_earn)
             
-            if i < 7:  # Last 7 days for weekly
+            if i < 7:
                 total_weekly += daily_earn
             total_monthly += daily_earn
         
@@ -249,10 +206,9 @@ class QuilNodeMonitor:
             print(f"Monthly Average: {monthly_avg:.6f} QUIL // ${monthly_avg * quil_price:.2f}")
             print(f"Daily Average:   {daily_avg:.6f} QUIL // ${daily_avg * quil_price:.2f}")
         
-        # Get today's metrics
-        today = datetime.now().strftime('%Y-%m-%d')
+        today = current_time.strftime('%Y-%m-%d')
         today_metrics = self.get_shard_metrics(today)
-        today_earnings = self.get_earnings(today)
+        today_earnings = self.get_daily_earnings(today)
         
         print(f"\nToday's Stats ({today}):")
         print(f"Earnings:        {today_earnings:.6f} QUIL // ${today_earnings * quil_price:.2f}")
@@ -260,11 +216,10 @@ class QuilNodeMonitor:
         print(f"Shards/Hour:     {today_metrics['shards_per_hour']:.2f}")
         print(f"Avg Frame Age:   {today_metrics['avg_frame_age']:.2f} seconds")
 
-        # Show last 7 days - just earnings
         print("\nEarnings History:")
         for i in range(7):
-            date = (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d')
-            daily_earn = self.get_earnings(date)
+            date = (current_time - timedelta(days=i)).strftime('%Y-%m-%d')
+            daily_earn = self.get_daily_earnings(date)
             print(f"{date}: {daily_earn:.6f} QUIL // ${daily_earn * quil_price:.2f}")
 
 if __name__ == "__main__":
