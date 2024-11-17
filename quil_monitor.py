@@ -95,7 +95,6 @@ class QuilNodeMonitor:
                 'ring': ring,
                 'active_workers': 1024,
                 'owned': owned_balance,
-                'bridged': 0,
                 'total': owned_balance
             }
         except Exception as e:
@@ -111,15 +110,22 @@ class QuilNodeMonitor:
             result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
             
             shards = []
+            fast_shards = 0    # 0-30 seconds
+            medium_shards = 0  # 30-60 seconds
+            slow_shards = 0    # 60+ seconds
+            
             for line in result.stdout.splitlines():
                 try:
                     data = json.loads(line)
-                    timestamp = data.get('ts')
-                    if timestamp:
-                        shards.append({
-                            'timestamp': timestamp,
-                            'frame_age': data.get('frame_age', 0)
-                        })
+                    frame_age = data.get('frame_age', 0)
+                    shards.append(frame_age)
+                    
+                    if frame_age <= 30:
+                        fast_shards += 1
+                    elif frame_age <= 60:
+                        medium_shards += 1
+                    else:
+                        slow_shards += 1
                 except:
                     continue
             
@@ -131,24 +137,42 @@ class QuilNodeMonitor:
                     shards_per_hour = total_shards / (hours_passed if hours_passed > 0 else 1)
                 else:
                     shards_per_hour = total_shards / 24
-                    
-                avg_frame_age = sum(s['frame_age'] for s in shards) / total_shards
+                
+                avg_frame_age = sum(shards) / total_shards
+                
+                # Calculate percentages
+                fast_percent = (fast_shards / total_shards * 100) if total_shards > 0 else 0
+                medium_percent = (medium_shards / total_shards * 100) if total_shards > 0 else 0
+                slow_percent = (slow_shards / total_shards * 100) if total_shards > 0 else 0
             else:
                 shards_per_hour = 0
                 avg_frame_age = 0
+                fast_percent = medium_percent = slow_percent = 0
             
             return {
                 'date': date,
                 'total_shards': total_shards,
                 'shards_per_hour': shards_per_hour,
-                'avg_frame_age': avg_frame_age
+                'avg_frame_age': avg_frame_age,
+                'fast_shards': fast_shards,
+                'medium_shards': medium_shards,
+                'slow_shards': slow_shards,
+                'fast_percent': fast_percent,
+                'medium_percent': medium_percent,
+                'slow_percent': slow_percent
             }
         except Exception as e:
             return {
                 'date': date,
                 'total_shards': 0,
                 'shards_per_hour': 0,
-                'avg_frame_age': 0
+                'avg_frame_age': 0,
+                'fast_shards': 0,
+                'medium_shards': 0,
+                'slow_shards': 0,
+                'fast_percent': 0,
+                'medium_percent': 0,
+                'slow_percent': 0
             }
 
     def get_daily_earnings(self, date):
@@ -171,6 +195,17 @@ class QuilNodeMonitor:
         except Exception as e:
             return 0
 
+    def get_earnings_data(self):
+        dates = sorted(self.history['daily_balance'].keys())
+        earnings = []
+        
+        for i in range(len(dates)-1):
+            current_date = dates[i+1]
+            daily_earn = self.get_daily_earnings(current_date)
+            earnings.append((current_date, daily_earn))
+            
+        return sorted(earnings, reverse=True)
+
     def display_stats(self):
         print("\n=== QUIL Node Statistics ===")
         current_time = datetime.now()
@@ -179,22 +214,21 @@ class QuilNodeMonitor:
         node_info = self.get_node_info()
         quil_price = self.get_quil_price()
         
-        earnings_list = []
-        total_weekly = 0
-        total_monthly = 0
+        earnings_data = self.get_earnings_data()
         
-        for i in range(30):
-            date = (current_time - timedelta(days=i)).strftime('%Y-%m-%d')
-            daily_earn = self.get_daily_earnings(date)
-            earnings_list.append(daily_earn)
+        if earnings_data:
+            recent_earnings = earnings_data[:7]
+            weekly_total = sum(earn for _, earn in recent_earnings)
+            daily_avg = weekly_total / len(recent_earnings)
+            weekly_avg = weekly_total
             
-            if i < 7:
-                total_weekly += daily_earn
-            total_monthly += daily_earn
-        
-        daily_avg = total_weekly / 7 if earnings_list else 0
-        weekly_avg = total_weekly
-        monthly_avg = total_monthly
+            if len(earnings_data) >= 30:
+                monthly_total = sum(earn for _, earn in earnings_data[:30])
+                monthly_avg = monthly_total
+            else:
+                monthly_avg = weekly_avg * 4
+        else:
+            daily_avg = weekly_avg = monthly_avg = 0
         
         if node_info:
             print(f"\nNode Information:")
@@ -202,9 +236,9 @@ class QuilNodeMonitor:
             print(f"Active Workers:  {node_info['active_workers']}")
             print(f"QUIL Price:      ${quil_price:.4f}")
             print(f"QUIL on Node:    {node_info['total']:.6f}")
+            print(f"Daily Average:   {daily_avg:.6f} QUIL // ${daily_avg * quil_price:.2f}")
             print(f"Weekly Average:  {weekly_avg:.6f} QUIL // ${weekly_avg * quil_price:.2f}")
             print(f"Monthly Average: {monthly_avg:.6f} QUIL // ${monthly_avg * quil_price:.2f}")
-            print(f"Daily Average:   {daily_avg:.6f} QUIL // ${daily_avg * quil_price:.2f}")
         
         today = current_time.strftime('%Y-%m-%d')
         today_metrics = self.get_shard_metrics(today)
@@ -212,15 +246,17 @@ class QuilNodeMonitor:
         
         print(f"\nToday's Stats ({today}):")
         print(f"Earnings:        {today_earnings:.6f} QUIL // ${today_earnings * quil_price:.2f}")
-        print(f"Total Shards:    {today_metrics['total_shards']}")
-        print(f"Shards/Hour:     {today_metrics['shards_per_hour']:.2f}")
-        print(f"Avg Frame Age:   {today_metrics['avg_frame_age']:.2f} seconds")
+        print(f"Shard Processing:")
+        print(f"  Total Shards:    {today_metrics['total_shards']}")
+        print(f"  Shards/Hour:     {today_metrics['shards_per_hour']:.2f}")
+        print(f"  Average Time:    {today_metrics['avg_frame_age']:.2f} seconds")
+        print(f"  0-30 sec:        {today_metrics['fast_shards']} shards ({today_metrics['fast_percent']:.1f}%)")
+        print(f"  30-60 sec:       {today_metrics['medium_shards']} shards ({today_metrics['medium_percent']:.1f}%)")
+        print(f"  60+ sec:         {today_metrics['slow_shards']} shards ({today_metrics['slow_percent']:.1f}%)")
 
         print("\nEarnings History:")
-        for i in range(7):
-            date = (current_time - timedelta(days=i)).strftime('%Y-%m-%d')
-            daily_earn = self.get_daily_earnings(date)
-            print(f"{date}: {daily_earn:.6f} QUIL // ${daily_earn * quil_price:.2f}")
+        for date, earn in earnings_data[:7]:
+            print(f"{date}: {earn:.6f} QUIL // ${earn * quil_price:.2f}")
 
 if __name__ == "__main__":
     check_sudo()
