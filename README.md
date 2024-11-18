@@ -1,137 +1,165 @@
 # QUIL Node Monitor
 
-A Python script for monitoring QUIL node performance, earnings, and metrics. This tool provides real-time tracking and historical data of your node's earnings in both QUIL and USD, along with detailed performance metrics.
+A comprehensive monitoring solution for QUIL nodes that tracks earnings, shard processing metrics, and sends daily reports via Telegram.
 
 ## Features
 
-- 🔄 Automatic detection and use of latest node binary
-- 💰 Real-time QUIL/USD price tracking via CoinGecko API
-- 📊 Comprehensive node statistics:
-  - Daily earnings
-  - Weekly and monthly averages
-  - Shard metrics and performance
-- 📈 Historical tracking of earnings and performance
-- 💱 Automatic USD conversion for all QUIL values
-- 📅 Calendar day-based metrics
-- 🔍 Detailed shard statistics
+- 📊 Real-time monitoring of node performance and earnings
+- 💰 Automatic QUIL/USD price tracking
+- ⏱️ Detailed shard processing metrics and categorization
+- 🚨 Telegram alerts for performance issues
+- 📱 Daily summary reports via Telegram
+- 📈 CSV export for historical data analysis
+- 🎨 Color-coded terminal output
+- 🤖 Automation support via cron
 
-## Sample Output
-```
-=== QUIL Node Statistics ===
-Time: 2024-11-14 23:25:18
+## Quick Start
 
-Node Information:
-Ring:            3
-Active Workers:  1024
-QUIL Price:      $0.1180
-QUIL on Node:    15136.297105
-Weekly Average:  78.565432 QUIL // $96.98
-Monthly Average: 312.123456 QUIL // $385.42
-Daily Average:   11.223633 QUIL // $13.85
-
-Today's Stats (2024-11-14):
-Earnings:        12.345678 QUIL // $15.24
-Total Shards:    666
-Avg Time Between: 82.45 seconds
-Avg Frame Age:    65.32 seconds
-
-Earnings History:
-2024-11-14: 12.345678 QUIL // $15.24
-2024-11-13: 11.223344 QUIL // $13.85
-2024-11-12: 10.987654 QUIL // $13.56
-...
-```
-
-## Prerequisites
-
-- Python 3.6 or higher
-- Running QUIL Node with ceremonyclient service
-- sudo access for log reading
-- Active internet connection for price data
-
-## Installation
-
-## Installation
-
-Navigate to your node directory defalt being ceremonyclient/node
-1. Download the script directly to your node directory:
+1. Clone the repository:
 ```bash
-curl -O https://raw.githubusercontent.com/wolfcubecho/quil-monitor/main/quil_monitor.py && chmod +x quil_monitor.py
-```
-or using wget:
-```bash
-wget https://raw.githubusercontent.com/wolfcubecho/quil-monitor/main/quil_monitor.py && chmod +x quil_monitor.py
+git clone https://github.com/yourusername/quil-monitor.git
+cd quil-monitor
 ```
 
-2. Install required package:
+2. Install requirements:
 ```bash
-sudo pip3 install requests
+pip3 install requests
 ```
 
-3. Run the script:
+3. Set up Telegram notifications:
+```bash
+sudo python3 quil_monitor.py --setup-telegram
+```
+
+4. Run the monitor:
 ```bash
 sudo python3 quil_monitor.py
 ```
 
-## Data Storage
+## Telegram Integration
 
-The script stores historical data in `quil_metrics.json` in the same directory as the script. This file tracks:
-- Daily balances
-- Shard metrics
-- Historical performance data
+### Setup
+1. Message @BotFather on Telegram to create a new bot
+2. Get your chat ID from @userinfobot
+3. Run the setup command or manually configure in the script:
+```python
+TELEGRAM_CONFIG = {
+    'bot_token': 'YOUR_BOT_TOKEN',
+    'chat_id': 'YOUR_CHAT_ID',
+    'node_name': 'Node-1',
+    'enabled': True,
+    'daily_report_hour': 0,
+    'daily_report_minute': 5
+}
+```
 
-## Error Handling
+### Daily Reports
+Receives a daily summary including:
+- Current QUIL balance and USD value
+- Daily earnings and comparison to average
+- Shard processing statistics
+- Performance metrics
 
-The script includes robust error handling for:
-- Node binary detection and access
-- Service log reading
-- Price API connectivity
-- Data parsing and calculations
+## Monitoring Features
 
-## Automatic Updates
+### Earnings Tracking
+- Real-time QUIL earnings monitoring
+- Automatic USD conversion
+- Daily, weekly, and monthly averages
+- Historical earnings data
 
-The script automatically detects and uses the latest node binary in your directory, ensuring compatibility with node updates.
+### Shard Processing
+- Total shard count
+- Processing time categorization:
+  - Fast (0-30s)
+  - Medium (30-60s)
+  - Slow (60s+)
+- Average processing times
+- Hourly shard rates
+
+### Performance Alerts
+Configurable alerts for:
+```python
+ALERT_THRESHOLDS = {
+    'processing_time_warning': 45,    # seconds
+    'processing_time_critical': 60,   # seconds
+    'earnings_deviation': 25         # percentage
+}
+```
+
+## Automation
+
+### Cron Setup
+Add to crontab (`sudo crontab -e`):
+```bash
+# Run monitor every hour
+0 * * * * cd /ceremonyclient/node/quil-monitor && python3 quil_monitor.py
+
+# Export data daily
+0 0 * * * cd /ceremonyclient/node/quil-monitor && python3 quil_monitor.py --export-csv
+```
+
+## Data Export
+
+### CSV Exports
+The script generates two CSV files:
+
+1. `quil_daily.csv`:
+   - Date
+   - Balance
+   - Earnings
+   - USD values
+   - Shard counts
+   - Processing times
+
+2. `quil_shards.csv`:
+   - Detailed shard metrics
+   - Processing time categories
+   - Performance statistics
+
+## Requirements
+
+- Python 3.6 or higher
+- QUIL node with ceremonyclient service
+- sudo access for log reading
+- Internet connection for price data
+- `requests` Python package
 
 ## Troubleshooting
 
-Common issues and solutions:
+### Common Issues
 
-1. "Permission denied"
-   ```bash
-   Solution: Run the script with sudo
-   ```
+1. Permission denied
+```bash
+Solution: Run with sudo
+```
 
-2. "No node binary found"
-   ```bash
-   Solution: Ensure script is in the same directory as your node binary
-   ```
+2. No node binary found
+```bash
+Solution: Ensure script is in node directory
+```
 
-3. "Error getting QUIL price"
-   ```bash
-   Solution: Check internet connection and CoinGecko API access
-   ```
+3. Telegram configuration
+```bash
+Solution: Run --setup-telegram or check config values
+```
 
-4. "Error getting metrics"
-   ```bash
-   Solution: Verify ceremonyclient service is running
-            Check journalctl access permissions
-   ```
+4. Missing historical data
+```bash
+Solution: Allow script to run for multiple days to build history
+```
+
+## Security Note
+
+This script requires sudo access to read logs. Always review scripts requiring elevated privileges before running them.
 
 ## Contributing
 
-Contributions are welcome! Feel free to submit Issues or Pull Requests.
+Contributions are welcome! Please feel free to submit Issues or Pull Requests.
 
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Security Note
-
-This script requires sudo access to read node logs. Always review scripts requiring elevated privileges before running them.
-
-## Disclaimer
-
-This tool is provided as-is. Always verify earnings and metrics with official sources. Price data is provided by CoinGecko and may have slight variations from other sources.
 
 ---
 Made with ❤️ for the QUIL community
