@@ -17,7 +17,7 @@ A comprehensive monitoring solution for QUIL nodes that tracks earnings, shard p
 
 1. Wget py script in your node folder:
 ```bash
-wget https://github.com/wolfcubecho/quil_monitor.py && chmod +x quil_montior.py
+wget https://github.com/wolfcubecho/quil-monitor/blob/main/quil_monitor.py && chmod +x quil_montior.py
 ```
 
 2. Install requirements:
