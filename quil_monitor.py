@@ -340,7 +340,15 @@ class QuilNodeMonitor:
 
             metrics = {
                 'total_shards': total_shards,
-                'shards_per_hour': shards_per_hour,self._save_history()
+                'shards_per_hour': shards_per_hour,
+                'avg_frame_age': avg_frame_age,
+                'fast_shards': fast_shards,
+                'medium_shards': medium_shards,
+                'slow_shards': slow_shards
+            }
+            
+            self.history['shard_metrics'][date] = metrics
+            self._save_history()
             return metrics
             
         except Exception as e:
@@ -522,11 +530,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-                'avg_frame_age': avg_frame_age,
-                'fast_shards': fast_shards,
-                'medium_shards': medium_shards,
-                'slow_shards': slow_shards
-            }
-            
-            self.history['shard_metrics'][date] = metrics
-            
