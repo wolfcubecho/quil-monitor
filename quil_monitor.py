@@ -14,8 +14,8 @@ from pathlib import Path
 
 # Configuration
 TELEGRAM_CONFIG = {
-    'bot_token': 'bot_token',    # Get from @BotFather
-    'chat_id': 'chat_id',        # Get from @userinfobot
+    'bot_token': 'YOUR_BOT_TOKEN',    # Get from @BotFather
+    'chat_id': 'YOUR_CHAT_ID',        # Get from @userinfobot
     'node_name': 'Node-1',            # Identifier for this node
     'enabled': True,
     'daily_report_hour': 0,           # Hour to send daily report (0-23)
@@ -54,19 +54,17 @@ class TelegramNotifier:
         if not self.config['enabled'] or not self.is_valid_config():
             return
 
-        # Check alert cooldown (4 hours for same alert type)
         current_time = datetime.now()
         if alert_type in self.last_alert_time:
             time_diff = current_time - self.last_alert_time[alert_type]
-            if time_diff.total_seconds() < 14400:  # 4 hours
+            if time_diff.total_seconds() < 14400:  # 4 hours cooldown
                 return
 
         try:
             url = f"{self.base_url}/sendMessage"
-            is_alert = alert_type != 'info'
-            prefix = "🚨 ALERT: " if is_alert else "ℹ️ Info: "
+            prefix = "🚨 ALERT: " if alert_type != 'info' else ""
             if alert_type == 'daily_report':
-                prefix = ""  # No prefix for daily reports
+                prefix = ""
             
             data = {
                 'chat_id': self.config['chat_id'],
@@ -88,15 +86,12 @@ class TelegramNotifier:
             current_time = datetime.now()
             current_date = current_time.strftime('%Y-%m-%d')
             
-            # Prevent duplicate reports
             if self.last_report_date == current_date:
                 return
                 
-            # Calculate earnings comparison
             earn_diff_pct = ((earnings - avg_earnings) / avg_earnings * 100) if avg_earnings > 0 else 0
             comparison = "higher" if earn_diff_pct > 0 else "lower"
             
-            # Calculate shard percentages
             total_shards = metrics['total_shards']
             if total_shards > 0:
                 fast_pct = (metrics['fast_shards'] / total_shards) * 100
@@ -170,11 +165,10 @@ class CSVExporter:
             writer = csv.writer(f)
             writer.writerow(headers)
             writer.writerows(rows)
-        print(f"Daily data exported to {self.daily_file}")
 
     def export_shard_metrics(self):
-        headers = ['Date', 'Total Shards', 'Avg Time', 
-                  'Fast Shards (0-30s)', 'Medium Shards (30-60s)', 'Slow Shards (60s+)']
+        headers = ['Date', 'Total Shards', 'Avg Time', 'Fast Shards (0-30s)', 
+                  'Medium Shards (30-60s)', 'Slow Shards (60s+)']
         rows = []
         
         dates = sorted(self.monitor.history['shard_metrics'].keys())
@@ -194,7 +188,6 @@ class CSVExporter:
             writer = csv.writer(f)
             writer.writerow(headers)
             writer.writerows(rows)
-        print(f"Shard metrics exported to {self.shards_file}")
 
 class QuilNodeMonitor:
     def __init__(self, log_file="quil_metrics.json"):
@@ -204,18 +197,7 @@ class QuilNodeMonitor:
         self.node_binary = self._get_latest_node_binary()
         self.telegram = TelegramNotifier(TELEGRAM_CONFIG)
         self.csv_exporter = CSVExporter(self)
-
-    def load_history(self):
-        if os.path.exists(self.log_file):
-            try:
-                with open(self.log_file, 'r') as f:
-                    saved_data = json.load(f)
-                    if 'daily_balance' in saved_data:
-                        self.history['daily_balance'].update(saved_data['daily_balance'])
-                    if 'shard_metrics' in saved_data:
-                        self.history['shard_metrics'].update(saved_data['shard_metrics'])
-            except Exception as e:
-                print(f"Error loading history (will start fresh): {e}")
+        self.last_report_check = datetime.now().replace(hour=0, minute=0, second=0)
 
     def _get_latest_node_binary(self):
         try:
@@ -243,13 +225,24 @@ class QuilNodeMonitor:
             print(f"Error finding node binary: {e}")
             sys.exit(1)
 
+    def load_history(self):
+        if os.path.exists(self.log_file):
+            try:
+                with open(self.log_file, 'r') as f:
+                    saved_data = json.load(f)
+                    if 'daily_balance' in saved_data:
+                        self.history['daily_balance'].update(saved_data['daily_balance'])
+                    if 'shard_metrics' in saved_data:
+                        self.history['shard_metrics'].update(saved_data['shard_metrics'])
+            except Exception as e:
+                print(f"Error loading history (will start fresh): {e}")
+
     def _save_history(self):
         try:
             with open(self.log_file, 'w') as f:
                 json.dump(self.history, f, indent=2)
         except Exception as e:
             print(f"Error saving history: {e}")
-            self.telegram.send_message(f"Error saving history: {e}", alert_type='error')
 
     def get_quil_price(self):
         try:
@@ -276,16 +269,17 @@ class QuilNodeMonitor:
             ring_match = re.search(r'Prover Ring: (\d+)', result.stdout)
             ring = int(ring_match.group(1)) if ring_match else 0
 
+            # Get real active workers count
             try:
-                workers_cmd = 'journalctl -u ceremonyclient.service --since "1 minute ago" --no-hostname -o cat | grep -i shard | tail -n 1'
+                workers_cmd = 'journalctl -u ceremonyclient.service --since "1 minute ago" --until "now" --no-hostname -o cat | grep -i "active_workers" | tail -n 1'
                 workers_result = subprocess.run(workers_cmd, shell=True, capture_output=True, text=True)
                 if workers_result.stdout.strip():
-                    workers_data = json.loads(workers_result.stdout.strip())
-                    active_workers = workers_data.get('active_workers', 1024)
+                    data = json.loads(workers_result.stdout.strip())
+                    active_workers = data.get('active_workers', 0)
                 else:
-                    active_workers = 1024
+                    active_workers = 0
             except:
-                active_workers = 1024
+                active_workers = 0
 
             owned_balance_match = re.search(r'Owned balance: ([\d.]+) QUIL', result.stdout)
             owned_balance = float(owned_balance_match.group(1)) if owned_balance_match else 0
@@ -312,7 +306,7 @@ class QuilNodeMonitor:
             start_time = f"{date} 00:00:00"
             end_time = f"{date} 23:59:59"
             
-            cmd = f'journalctl -u ceremonyclient.service --since "{start_time}" --until "{end_time}" --no-hostname -o cat | grep -i shard'
+            cmd = f'journalctl -u ceremonyclient.service --since "{start_time}" --until "{end_time}" --no-hostname -o cat | grep -i "creating data shard"'
             result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
             
             frame_ages = []
@@ -323,7 +317,7 @@ class QuilNodeMonitor:
             for line in result.stdout.splitlines():
                 try:
                     data = json.loads(line)
-                    frame_age = data.get('frame_age', 0)
+                    frame_age = float(data.get('frame_age', 0))
                     frame_ages.append(frame_age)
                     
                     if frame_age <= 30:
@@ -332,28 +326,21 @@ class QuilNodeMonitor:
                         medium_shards += 1
                     else:
                         slow_shards += 1
-                except:
+                except Exception as e:
                     continue
             
             total_shards = len(frame_ages)
             if total_shards > 0:
                 avg_frame_age = sum(frame_ages) / total_shards
-                hours_passed = datetime.now().hour + datetime.now().minute / 60
-                shards_per_hour = total_shards / (hours_passed if date == datetime.now().strftime('%Y-%m-%d') else 24)
+                hours_elapsed = datetime.now().hour + (datetime.now().minute / 60)
+                shards_per_hour = total_shards / (hours_elapsed if date == datetime.now().strftime('%Y-%m-%d') else 24)
             else:
                 avg_frame_age = 0
                 shards_per_hour = 0
 
             metrics = {
                 'total_shards': total_shards,
-                'shards_per_hour': shards_per_hour,
-                'avg_frame_age': avg_frame_age,
-                'fast_shards': fast_shards,
-                'medium_shards': medium_shards,
-                'slow_shards': slow_shards
-            }
-
-            self.history['shard_metrics'][date] = metrics
+                'shards_per_hour': shards_per_hour,self._save_history()
             return metrics
             
         except Exception as e:
@@ -383,37 +370,23 @@ class QuilNodeMonitor:
                 current_balance = self.history['daily_balance'][date]
             
             yesterday_balance = self.history['daily_balance'][yesterday]
-            earnings = current_balance - yesterday_balance
-            return earnings
+            return current_balance - yesterday_balance
             
         except Exception as e:
             print(f"Error calculating earnings for {date}: {e}")
             return 0
 
-    def calculate_average_earnings(self):
-        try:
-            dates = sorted(self.history['daily_balance'].keys())
-            if len(dates) < 2:
-                return 0
-            
-            total_earnings = 0
-            count = 0
-            
-            for i in range(len(dates)-1):
-                current_date = dates[i+1]
-                prev_date = dates[i]
-                
-                if current_date in self.history['daily_balance'] and prev_date in self.history['daily_balance']:
-                    current_balance = self.history['daily_balance'][current_date]
-                    prev_balance = self.history['daily_balance'][prev_date]
-                    daily_earn = current_balance - prev_balance
-                    total_earnings += daily_earn
-                    count += 1
-            
-            return total_earnings / count if count > 0 else 0
-        except Exception as e:
-            print(f"Error calculating average earnings: {e}")
-            return 0
+    def check_daily_report_time(self):
+        current_time = datetime.now()
+        time_check = (current_time.hour == TELEGRAM_CONFIG['daily_report_hour'] and 
+                     current_time.minute >= TELEGRAM_CONFIG['daily_report_minute'])
+        
+        # Check if we've passed at least 23 hours since last check
+        time_since_last = current_time - self.last_report_check
+        if time_check and time_since_last.total_seconds() >= 82800:  # 23 hours
+            self.last_report_check = current_time
+            return True
+        return False
 
     def display_stats(self):
         print("\n=== QUIL Node Statistics ===")
@@ -487,10 +460,9 @@ class QuilNodeMonitor:
         for date, earn in earnings_data[:7]:
             metrics = self.history['shard_metrics'].get(date, {'total_shards': 0})
             print(f"{date}: {earn:.6f} QUIL // ${earn * quil_price:.2f} // Shards: {metrics['total_shards']}")
-        
-        # Check if it's time for daily report
-        if (current_time.hour == TELEGRAM_CONFIG['daily_report_hour'] and 
-            current_time.minute == TELEGRAM_CONFIG['daily_report_minute']):
+
+        # Check for daily report time
+        if self.check_daily_report_time():
             self.telegram.send_daily_summary(
                 balance=node_info['total'],
                 earnings=today_earnings,
@@ -550,3 +522,11 @@ def main():
 
 if __name__ == "__main__":
     main()
+                'avg_frame_age': avg_frame_age,
+                'fast_shards': fast_shards,
+                'medium_shards': medium_shards,
+                'slow_shards': slow_shards
+            }
+            
+            self.history['shard_metrics'][date] = metrics
+            
