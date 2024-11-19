@@ -206,25 +206,33 @@ class QuilNodeMonitor:
                 raise Exception("No node binary found")
             
             def get_version_tuple(binary):
-                version_match = re.search(r'node-(\d+)\.(\d+)\.(\d+)\.(\d+)-linux-amd64', binary)
+                version_match = re.search(r'node-(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?-linux-amd64', binary)
                 if version_match:
-                    return tuple(int(x) for x in version_match.groups())
+                    # Convert all parts to integers, using 0 for missing fourth number
+                    parts = list(version_match.groups())
+                    parts[3] = parts[3] if parts[3] is not None else '0'
+                    return tuple(int(x) for x in parts)
                 return (0, 0, 0, 0)
 
-            node_binaries.sort(key=get_version_tuple, reverse=True)
-            latest_binary = node_binaries[0]
+            # Debug printing
+            #print("Found binaries:")
+            #for binary in node_binaries:
+             #   print(f"{binary}: version = {get_version_tuple(binary)}")
+
+            latest_binary = max(node_binaries, key=get_version_tuple)
             
-            if not os.path.exists(latest_binary):
-                raise Exception(f"Binary {latest_binary} not found")
-            if not os.access(latest_binary, os.X_OK):
-                raise Exception(f"Binary {latest_binary} is not executable")
+            #if not os.path.exists(latest_binary):
+             #   raise Exception(f"Binary {latest_binary} not found")
+            #if not os.access(latest_binary, os.X_OK):
+             #   raise Exception(f"Binary {latest_binary} is not executable")
             
-            print(f"Using node binary: {latest_binary}")
+            print(f"Selected latest binary: {latest_binary}")
             return latest_binary
+            
         except Exception as e:
             print(f"Error finding node binary: {e}")
             sys.exit(1)
-
+            
     def load_history(self):
         if os.path.exists(self.log_file):
             try:
