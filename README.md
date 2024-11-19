@@ -92,10 +92,10 @@ ALERT_THRESHOLDS = {
 Add to crontab (`sudo crontab -e`):
 ```bash
 # Run monitor every hour
-0 * * * * cd /ceremonyclient/node/quil-monitor && python3 quil_monitor.py
+0 * * * * cd /root/ceremonyclient/node && sudo python3 quil_monitor.py
 
 # Export data daily
-0 0 * * * cd /ceremonyclient/node/quil-monitor && python3 quil_monitor.py --export-csv
+0 0 * * * cd /root/ceremonyclient/node && sudo python3 quil_monitor.py --export-csv
 ```
 
 ## Data Export
