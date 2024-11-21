@@ -263,8 +263,8 @@ class QuilNodeMonitor:
             seniority_match = re.search(r'Seniority: (\d+)', result.stdout)
             seniority = int(seniority_match.group(1)) if seniority_match else 0
 
-            # Get active workers from node info
-            workers_match = re.search(r'Max Frame: (\d+)', result.stdout)
+            # Get active workers correctly from node info
+            workers_match = re.search(r'Active Workers: (\d+)', result.stdout)
             active_workers = int(workers_match.group(1)) if workers_match else 0
 
             # Get balance
