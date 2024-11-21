@@ -342,7 +342,7 @@ class QuilNodeMonitor:
                 'cpu': {'total': 0, 'avg_time': 0}
             }
 
-   def get_daily_earnings(self, date):
+    def get_daily_earnings(self, date):
         try:
             yesterday = (datetime.strptime(date, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d')
             
