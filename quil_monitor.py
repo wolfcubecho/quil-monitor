@@ -255,10 +255,16 @@ class QuilNodeMonitor:
             if result.returncode != 0:
                 return None
 
+            # Get ring number
             ring_match = re.search(r'Prover Ring: (\d+)', result.stdout)
             ring = int(ring_match.group(1)) if ring_match else 0
 
-            workers_cmd = 'journalctl -u ceremonyclient.service --since "1 minute ago" --until "now" --no-hostname -o cat | grep -i "active_workers" | tail -n 1'
+            # Get seniority
+            seniority_match = re.search(r'Seniority: (\d+)', result.stdout)
+            seniority = int(seniority_match.group(1)) if seniority_match else 0
+
+            # Get active workers from the shard logs
+            workers_cmd = 'journalctl -u ceremonyclient.service --since "1 minute ago" --until "now" --no-hostname -o cat | grep -i "creating data shard ring proof" | tail -n 1'
             try:
                 workers_result = subprocess.run(workers_cmd, shell=True, capture_output=True, text=True)
                 if workers_result.stdout.strip():
@@ -269,6 +275,7 @@ class QuilNodeMonitor:
             except:
                 active_workers = 0
 
+            # Get balance
             owned_balance_match = re.search(r'Owned balance: ([\d.]+) QUIL', result.stdout)
             owned_balance = float(owned_balance_match.group(1)) if owned_balance_match else 0
 
@@ -280,7 +287,8 @@ class QuilNodeMonitor:
                 'ring': ring,
                 'active_workers': active_workers,
                 'owned': owned_balance,
-                'total': owned_balance
+                'total': owned_balance,
+                'seniority': seniority
             }
         except Exception as e:
             print(f"Error getting node info: {e}")
@@ -426,6 +434,7 @@ class QuilNodeMonitor:
             print(f"\nNode Information:")
             print(f"Ring:            {node_info['ring']}")
             print(f"Active Workers:  {node_info['active_workers']}")
+            print(f"Seniority:      {node_info['seniority']}")
             print(f"QUIL Price:      ${quil_price:.4f}")
             print(f"QUIL on Node:    {node_info['total']:.6f}")
             print(f"Daily Average:   {daily_avg:.6f} QUIL // ${daily_avg * quil_price:.2f}")
