@@ -357,7 +357,7 @@ class QuilNodeMonitor:
             else:
                 current_balance = self.history['daily_balance'][date]
             
-        yesterday_balance = self.history['daily_balance'][yesterday]
+            yesterday_balance = self.history['daily_balance'][yesterday]
             return current_balance - yesterday_balance
             
         except Exception as e:
