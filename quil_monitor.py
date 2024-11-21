@@ -22,11 +22,20 @@ TELEGRAM_CONFIG = {
     'daily_report_minute': 5          # Minute to send report (0-59)
 }
 
-# Alert Thresholds
-ALERT_THRESHOLDS = {
-    'processing_time_warning': 45,    # Daily average seconds
-    'processing_time_critical': 60,   # Daily average seconds
-    'earnings_deviation': 25         # Percentage below daily average
+# Processing Time Thresholds (seconds)
+THRESHOLDS = {
+    'creation': {
+        'good': 17,      # 0-17s
+        'warning': 50    # 17-50s, >50s critical
+    },
+    'submission': {
+        'good': 28,      # 0-28s
+        'warning': 70    # 28-70s, >70s critical
+    },
+    'cpu': {
+        'good': 20,      # 0-20s
+        'warning': 30    # 20-30s, >30s critical
+    }
 }
 
 # ANSI Colors
@@ -35,13 +44,66 @@ COLORS = {
     'yellow': '\033[93m',
     'red': '\033[91m',
     'reset': '\033[0m',
-    'bold': '\033[1m'
+    'bold': '\033[1m',
+    'cyan': '\033[96m'
 }
 
 def check_sudo():
     if os.geteuid() != 0:
         print("This script requires sudo privileges")
         sys.exit(1)
+
+class ProcessingMetrics:
+    def __init__(self):
+        self.creation_times = []
+        self.submission_times = []
+        self.cpu_times = []
+        
+    def add_creation(self, time):
+        self.creation_times.append(float(time))
+        
+    def add_submission(self, time):
+        self.submission_times.append(float(time))
+        
+    def add_cpu_time(self, time):
+        if time > 0:  # Only add positive CPU times
+            self.cpu_times.append(float(time))
+        
+    def calculate_stats(self, times, thresholds):
+        if not times:
+            return {
+                'total': 0,
+                'good': 0,
+                'warning': 0,
+                'critical': 0,
+                'good_pct': 0,
+                'warning_pct': 0,
+                'critical_pct': 0,
+                'avg_time': 0
+            }
+            
+        total = len(times)
+        good = sum(1 for t in times if t <= thresholds['good'])
+        warning = sum(1 for t in times if thresholds['good'] < t <= thresholds['warning'])
+        critical = sum(1 for t in times if t > thresholds['warning'])
+        
+        return {
+            'total': total,
+            'good': good,
+            'warning': warning,
+            'critical': critical,
+            'good_pct': (good/total)*100 if total > 0 else 0,
+            'warning_pct': (warning/total)*100 if total > 0 else 0,
+            'critical_pct': (critical/total)*100 if total > 0 else 0,
+            'avg_time': sum(times)/total if total > 0 else 0
+        }
+        
+    def get_stats(self):
+        return {
+            'creation': self.calculate_stats(self.creation_times, THRESHOLDS['creation']),
+            'submission': self.calculate_stats(self.submission_times, THRESHOLDS['submission']),
+            'cpu': self.calculate_stats(self.cpu_times, THRESHOLDS['cpu'])
+        }
 
 class TelegramNotifier:
     def __init__(self, config: Dict[str, str]):
@@ -68,7 +130,7 @@ class TelegramNotifier:
             
             data = {
                 'chat_id': self.config['chat_id'],
-                'text': f"{prefix}{message}",
+                'text': f"{prefix}{message}\n\nTime: {current_time.strftime('%Y-%m-%d %H:%M:%S')}",
                 'parse_mode': 'HTML'
             }
             response = requests.post(url, data=data)
@@ -91,14 +153,6 @@ class TelegramNotifier:
                 
             earn_diff_pct = ((earnings - avg_earnings) / avg_earnings * 100) if avg_earnings > 0 else 0
             comparison = "higher" if earn_diff_pct > 0 else "lower"
-            
-            total_shards = metrics['total_shards']
-            if total_shards > 0:
-                fast_pct = (metrics['fast_shards'] / total_shards) * 100
-                med_pct = (metrics['medium_shards'] / total_shards) * 100
-                slow_pct = (metrics['slow_shards'] / total_shards) * 100
-            else:
-                fast_pct = med_pct = slow_pct = 0
 
             message = (
                 f"📊 Daily Summary for {self.config['node_name']}\n"
@@ -106,12 +160,10 @@ class TelegramNotifier:
                 f"💰 Balance: {balance:.6f} QUIL (${balance * quil_price:.2f})\n"
                 f"📈 Daily Earnings: {earnings:.6f} QUIL (${earnings * quil_price:.2f})\n"
                 f"🔄 {abs(earn_diff_pct):.1f}% {comparison} than average\n\n"
-                f"⚙️ Shard Processing:\n"
-                f"Total Shards: {total_shards}\n"
-                f"0-30s: {fast_pct:.1f}%\n"
-                f"30-60s: {med_pct:.1f}%\n"
-                f"60s+: {slow_pct:.1f}%\n"
-                f"Avg Time: {metrics['avg_frame_age']:.1f}s"
+                f"⚡ Processing Performance:\n"
+                f"Creation: {metrics['creation']['avg_time']:.2f}s avg ({metrics['creation']['total']} proofs)\n"
+                f"Submission: {metrics['submission']['avg_time']:.2f}s avg\n"
+                f"CPU Time: {metrics['cpu']['avg_time']:.2f}s avg"
             )
             
             self.send_message(message, alert_type='daily_report')
@@ -125,78 +177,13 @@ class TelegramNotifier:
                 self.config['bot_token'] != 'YOUR_BOT_TOKEN' and
                 self.config['chat_id'])
 
-class CSVExporter:
-    def __init__(self, monitor):
-        self.monitor = monitor
-        self.data_dir = "quil_data"
-        Path(self.data_dir).mkdir(exist_ok=True)
-        self.daily_file = f"{self.data_dir}/quil_daily.csv"
-        self.shards_file = f"{self.data_dir}/quil_shards.csv"
-
-    def export_daily_data(self):
-        headers = ['Date', 'Balance', 'Earnings', 'USD Value', 'Total Shards', 
-                  'Avg Processing Time', 'Daily Earnings Rate']
-        rows = []
-        
-        dates = sorted(self.monitor.history['daily_balance'].keys())
-        quil_price = self.monitor.get_quil_price()
-        
-        for date in dates:
-            balance = self.monitor.history['daily_balance'][date]
-            earnings = self.monitor.get_daily_earnings(date)
-            usd_value = earnings * quil_price
-            
-            metrics = self.monitor.history['shard_metrics'].get(date, {})
-            total_shards = metrics.get('total_shards', 0)
-            avg_time = metrics.get('avg_frame_age', 0)
-            
-            if date == datetime.now().strftime('%Y-%m-%d'):
-                hours_passed = datetime.now().hour + datetime.now().minute / 60
-                daily_rate = (earnings / hours_passed * 24) if hours_passed > 0 else 0
-            else:
-                daily_rate = earnings
-                
-            rows.append([
-                date, balance, earnings, usd_value, total_shards, 
-                avg_time, daily_rate
-            ])
-
-        with open(self.daily_file, 'w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(headers)
-            writer.writerows(rows)
-
-    def export_shard_metrics(self):
-        headers = ['Date', 'Total Shards', 'Avg Time', 'Fast Shards (0-30s)', 
-                  'Medium Shards (30-60s)', 'Slow Shards (60s+)']
-        rows = []
-        
-        dates = sorted(self.monitor.history['shard_metrics'].keys())
-        for date in dates[-7:]:  # Last 7 days
-            metrics = self.monitor.history['shard_metrics'][date]
-            if metrics['total_shards'] > 0:
-                rows.append([
-                    date,
-                    metrics['total_shards'],
-                    metrics['avg_frame_age'],
-                    metrics['fast_shards'],
-                    metrics['medium_shards'],
-                    metrics['slow_shards']
-                ])
-
-        with open(self.shards_file, 'w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(headers)
-            writer.writerows(rows)
-
 class QuilNodeMonitor:
     def __init__(self, log_file="quil_metrics.json"):
         self.log_file = log_file
-        self.history = {'daily_balance': {}, 'shard_metrics': {}}
+        self.history = {'daily_balance': {}, 'processing_metrics': {}}
         self.load_history()
         self.node_binary = self._get_latest_node_binary()
         self.telegram = TelegramNotifier(TELEGRAM_CONFIG)
-        self.csv_exporter = CSVExporter(self)
         self.last_report_check = datetime.now().replace(hour=0, minute=0, second=0)
 
     def _get_latest_node_binary(self):
@@ -208,31 +195,25 @@ class QuilNodeMonitor:
             def get_version_tuple(binary):
                 version_match = re.search(r'node-(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?-linux-amd64', binary)
                 if version_match:
-                    # Convert all parts to integers, using 0 for missing fourth number
                     parts = list(version_match.groups())
                     parts[3] = parts[3] if parts[3] is not None else '0'
                     return tuple(int(x) for x in parts)
                 return (0, 0, 0, 0)
 
-            # Debug printing
-            #print("Found binaries:")
-            #for binary in node_binaries:
-             #   print(f"{binary}: version = {get_version_tuple(binary)}")
-
-            latest_binary = max(node_binaries, key=get_version_tuple)
+            node_binaries.sort(key=get_version_tuple, reverse=True)
+            latest_binary = node_binaries[0]
             
-            #if not os.path.exists(latest_binary):
-             #   raise Exception(f"Binary {latest_binary} not found")
-            #if not os.access(latest_binary, os.X_OK):
-             #   raise Exception(f"Binary {latest_binary} is not executable")
+            if not os.path.exists(latest_binary):
+                raise Exception(f"Binary {latest_binary} not found")
+            if not os.access(latest_binary, os.X_OK):
+                raise Exception(f"Binary {latest_binary} is not executable")
             
-            print(f"Selected latest binary: {latest_binary}")
+            print(f"Using node binary: {latest_binary}")
             return latest_binary
-            
         except Exception as e:
             print(f"Error finding node binary: {e}")
             sys.exit(1)
-            
+
     def load_history(self):
         if os.path.exists(self.log_file):
             try:
@@ -240,8 +221,8 @@ class QuilNodeMonitor:
                     saved_data = json.load(f)
                     if 'daily_balance' in saved_data:
                         self.history['daily_balance'].update(saved_data['daily_balance'])
-                    if 'shard_metrics' in saved_data:
-                        self.history['shard_metrics'].update(saved_data['shard_metrics'])
+                    if 'processing_metrics' in saved_data:
+                        self.history['processing_metrics'].update(saved_data['processing_metrics'])
             except Exception as e:
                 print(f"Error loading history (will start fresh): {e}")
 
@@ -277,9 +258,8 @@ class QuilNodeMonitor:
             ring_match = re.search(r'Prover Ring: (\d+)', result.stdout)
             ring = int(ring_match.group(1)) if ring_match else 0
 
-            # Get real active workers count
+            workers_cmd = 'journalctl -u ceremonyclient.service --since "1 minute ago" --until "now" --no-hostname -o cat | grep -i "active_workers" | tail -n 1'
             try:
-                workers_cmd = 'journalctl -u ceremonyclient.service --since "1 minute ago" --until "now" --no-hostname -o cat | grep -i "active_workers" | tail -n 1'
                 workers_result = subprocess.run(workers_cmd, shell=True, capture_output=True, text=True)
                 if workers_result.stdout.strip():
                     data = json.loads(workers_result.stdout.strip())
@@ -306,68 +286,60 @@ class QuilNodeMonitor:
             print(f"Error getting node info: {e}")
             return None
 
-    def get_shard_metrics(self, date=None):
+    def get_processing_metrics(self, date=None):
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
         
+        metrics = ProcessingMetrics()
+        start_time = f"{date} 00:00:00"
+        end_time = f"{date} 23:59:59"
+
         try:
-            start_time = f"{date} 00:00:00"
-            end_time = f"{date} 23:59:59"
-            
-            cmd = f'journalctl -u ceremonyclient.service --since "{start_time}" --until "{end_time}" --no-hostname -o cat | grep -i "creating data shard"'
+            # Get creation times first and store them
+            cmd = f'journalctl -u ceremonyclient.service --since "{start_time}" --until "{end_time}" --no-hostname -o cat | grep -i "creating data shard ring proof"'
             result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
             
-            frame_ages = []
-            fast_shards = 0
-            medium_shards = 0
-            slow_shards = 0
+            creation_data = {}
+            for line in result.stdout.splitlines():
+                try:
+                    data = json.loads(line)
+                    frame_number = data.get('frame_number')
+                    frame_age = float(data.get('frame_age', 0))
+                    creation_data[frame_number] = {'age': frame_age, 'timestamp': float(data.get('ts', 0))}
+                    metrics.add_creation(frame_age)
+                except:
+                    continue
+
+            # Get submission times and calculate CPU times
+            cmd = f'journalctl -u ceremonyclient.service --since "{start_time}" --until "{end_time}" --no-hostname -o cat | grep -i "submitting data proof"'
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
             
             for line in result.stdout.splitlines():
                 try:
                     data = json.loads(line)
+                    frame_number = data.get('frame_number')
                     frame_age = float(data.get('frame_age', 0))
-                    frame_ages.append(frame_age)
                     
-                    if frame_age <= 30:
-                        fast_shards += 1
-                    elif frame_age <= 60:
-                        medium_shards += 1
-                    else:
-                        slow_shards += 1
-                except Exception as e:
+                    if frame_number in creation_data:
+                        creation_age = creation_data[frame_number]['age']
+                        cpu_time = frame_age - creation_age
+                        metrics.add_cpu_time(cpu_time)
+                    
+                    metrics.add_submission(frame_age)
+                except:
                     continue
-            
-            total_shards = len(frame_ages)
-            if total_shards > 0:
-                avg_frame_age = sum(frame_ages) / total_shards
-                hours_elapsed = datetime.now().hour + (datetime.now().minute / 60)
-                shards_per_hour = total_shards / (hours_elapsed if date == datetime.now().strftime('%Y-%m-%d') else 24)
-            else:
-                avg_frame_age = 0
-                shards_per_hour = 0
 
-            metrics = {
-                'total_shards': total_shards,
-                'shards_per_hour': shards_per_hour,
-                'avg_frame_age': avg_frame_age,
-                'fast_shards': fast_shards,
-                'medium_shards': medium_shards,
-                'slow_shards': slow_shards
-            }
-            
-            self.history['shard_metrics'][date] = metrics
+            stats = metrics.get_stats()
+            self.history['processing_metrics'][date] = stats
             self._save_history()
-            return metrics
+            return stats
             
         except Exception as e:
-            print(f"Error getting shard metrics: {e}")
+            print(f"Error getting processing metrics: {e}")
             return {
-                'total_shards': 0,
-                'shards_per_hour': 0,
-                'avg_frame_age': 0,
-                'fast_shards': 0,
-                'medium_shards': 0,
-                'slow_shards': 0
+                'creation': {'total': 0, 'avg_time': 0},
+                'submission': {'total': 0, 'avg_time': 0},
+                'cpu': {'total': 0, 'avg_time': 0}
             }
 
     def get_daily_earnings(self, date):
@@ -385,7 +357,7 @@ class QuilNodeMonitor:
             else:
                 current_balance = self.history['daily_balance'][date]
             
-            yesterday_balance = self.history['daily_balance'][yesterday]
+        yesterday_balance = self.history['daily_balance'][yesterday]
             return current_balance - yesterday_balance
             
         except Exception as e:
@@ -394,17 +366,41 @@ class QuilNodeMonitor:
 
     def check_daily_report_time(self):
         current_time = datetime.now()
-        time_check = (current_time.hour == TELEGRAM_CONFIG['daily_report_hour'] and 
-                     current_time.minute >= TELEGRAM_CONFIG['daily_report_minute'])
+        last_run_file = "last_report.txt"
         
-        # Check if we've passed at least 23 hours since last check
-        time_since_last = current_time - self.last_report_check
-        if time_check and time_since_last.total_seconds() >= 82800:  # 23 hours
-            self.last_report_check = current_time
-            return True
+        try:
+            if os.path.exists(last_run_file):
+                with open(last_run_file, 'r') as f:
+                    last_run = datetime.strptime(f.read().strip(), '%Y-%m-%d')
+            else:
+                last_run = current_time - timedelta(days=1)
+
+            # Check if it's a new day and within configured time
+            if (current_time.date() > last_run.date() and 
+                current_time.hour == TELEGRAM_CONFIG['daily_report_hour'] and 
+                current_time.minute >= TELEGRAM_CONFIG['daily_report_minute']):
+                
+                with open(last_run_file, 'w') as f:
+                    f.write(current_time.strftime('%Y-%m-%d'))
+                return True
+                
+        except Exception as e:
+            print(f"Error checking daily report time: {e}")
+        
         return False
 
-    def display_stats(self):
+    def get_earnings_history(self, days=7):
+        earnings_data = []
+        today = datetime.now().date()
+        
+        for i in range(days):
+            date = (today - timedelta(days=i)).strftime('%Y-%m-%d')
+            earnings = self.get_daily_earnings(date)
+            earnings_data.append((date, earnings))
+            
+        return earnings_data
+
+def display_stats(self):
         print("\n=== QUIL Node Statistics ===")
         current_time = datetime.now()
         print(f"Time: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -412,27 +408,17 @@ class QuilNodeMonitor:
         node_info = self.get_node_info()
         quil_price = self.get_quil_price()
         
-        earnings_data = []
-        total_weekly = 0
-        total_monthly = 0
-        
-        dates = sorted(self.history['daily_balance'].keys())
-        for i in range(len(dates)-1):
-            current_date = dates[i+1]
-            daily_earn = self.get_daily_earnings(current_date)
-            earnings_data.append((current_date, daily_earn))
-            
-            days_ago = (datetime.strptime(dates[-1], '%Y-%m-%d') - datetime.strptime(current_date, '%Y-%m-%d')).days
-            if days_ago < 7:
-                total_weekly += daily_earn
-            if days_ago < 30:
-                total_monthly += daily_earn
-
-        daily_avg = total_weekly / min(7, len(earnings_data)) if earnings_data else 0
-        weekly_avg = total_weekly
-        monthly_avg = total_monthly
+        # Calculate earnings data and averages
+        today = current_time.strftime('%Y-%m-%d')
+        today_earnings = self.get_daily_earnings(today)
+        today_metrics = self.get_processing_metrics(today)
         
         if node_info:
+            earnings_data = self.get_earnings_history(7)  # Get last 7 days
+            daily_avg = sum(earn for _, earn in earnings_data) / len(earnings_data) if earnings_data else 0
+            weekly_avg = daily_avg * 7
+            monthly_avg = daily_avg * 30
+
             print(f"\nNode Information:")
             print(f"Ring:            {node_info['ring']}")
             print(f"Active Workers:  {node_info['active_workers']}")
@@ -442,42 +428,32 @@ class QuilNodeMonitor:
             print(f"Weekly Average:  {weekly_avg:.6f} QUIL // ${weekly_avg * quil_price:.2f}")
             print(f"Monthly Average: {monthly_avg:.6f} QUIL // ${monthly_avg * quil_price:.2f}")
 
-        today = current_time.strftime('%Y-%m-%d')
-        today_metrics = self.get_shard_metrics(today)
-        today_earnings = self.get_daily_earnings(today)
-        
+        # Today's Stats and Processing Analysis
         print(f"\nToday's Stats ({today}):")
         print(f"Earnings:        {today_earnings:.6f} QUIL // ${today_earnings * quil_price:.2f}")
-        print(f"\nShard Processing:")
-        print(f"  Total Shards:    {today_metrics['total_shards']}")
-        print(f"  Shards/Hour:     {today_metrics['shards_per_hour']:.2f}")
         
-        avg_time = today_metrics['avg_frame_age']
-        if avg_time > ALERT_THRESHOLDS['processing_time_critical']:
-            color = COLORS['red']
-        elif avg_time > ALERT_THRESHOLDS['processing_time_warning']:
-            color = COLORS['yellow']
-        else:
-            color = COLORS['green']
-        print(f"  Average Time:    {color}{avg_time:.2f}{COLORS['reset']} seconds")
-        
-        total = today_metrics['total_shards']
-        if total > 0:
-            fast_pct = (today_metrics['fast_shards'] / total) * 100
-            med_pct = (today_metrics['medium_shards'] / total) * 100
-            slow_pct = (today_metrics['slow_shards'] / total) * 100
-            
-            print(f"  0-30 sec:        {COLORS['green']}{today_metrics['fast_shards']} shards ({fast_pct:.1f}%){COLORS['reset']}")
-            print(f"  30-60 sec:       {COLORS['yellow']}{today_metrics['medium_shards']} shards ({med_pct:.1f}%){COLORS['reset']}")
-            print(f"  60+ sec:         {COLORS['red']}{today_metrics['slow_shards']} shards ({slow_pct:.1f}%){COLORS['reset']}")
+        print("\nProcessing Analysis:")
+        self.display_processing_section("Creation Stage (Network Latency)", 
+                                     today_metrics['creation'], 
+                                     THRESHOLDS['creation'])
+        self.display_processing_section("Submission Stage (Total Time)", 
+                                     today_metrics['submission'], 
+                                     THRESHOLDS['submission'])
+        self.display_processing_section("CPU Processing Time", 
+                                     today_metrics['cpu'], 
+                                     THRESHOLDS['cpu'])
 
-        print(f"\nEarnings History:")
-        earnings_data.sort(reverse=True)
-        for date, earn in earnings_data[:7]:
-            metrics = self.history['shard_metrics'].get(date, {'total_shards': 0})
-            print(f"{date}: {earn:.6f} QUIL // ${earn * quil_price:.2f} // Shards: {metrics['total_shards']}")
+        # Earnings History
+        print("\nEarnings History:")
+        for date, earnings in self.get_earnings_history(7):
+            metrics = self.history['processing_metrics'].get(date, {})
+            cpu_info = metrics.get('cpu', {})
+            total_proofs = metrics.get('creation', {}).get('total', 0)
+            avg_cpu = cpu_info.get('avg_time', 0)
+            print(f"{date}: {earnings:.6f} QUIL // ${earnings * quil_price:.2f} "
+                  f"(Avg Process: {avg_cpu:.2f}s, {total_proofs} proofs)")
 
-        # Check for daily report time
+        # Check for daily report
         if self.check_daily_report_time():
             self.telegram.send_daily_summary(
                 balance=node_info['total'],
@@ -486,6 +462,24 @@ class QuilNodeMonitor:
                 metrics=today_metrics,
                 quil_price=quil_price
             )
+
+    def display_processing_section(self, title, stats, thresholds):
+        print(f"\n{title}:")
+        print(f"  Total Proofs:    {stats['total']}")
+        print(f"  Average Time:    {stats['avg_time']:.2f}s")
+        
+        # Display categories with color coding
+        color = COLORS['green'] if stats['good_pct'] > 50 else COLORS['reset']
+        print(f"  0-{thresholds['good']}s:         "
+              f"{color}{stats['good']} proofs ({stats['good_pct']:.1f}%){COLORS['reset']}")
+        
+        color = COLORS['yellow'] if stats['warning_pct'] > 50 else COLORS['reset']
+        print(f"  {thresholds['good']}-{thresholds['warning']}s:     "
+              f"{color}{stats['warning']} proofs ({stats['warning_pct']:.1f}%){COLORS['reset']}")
+        
+        color = COLORS['red'] if stats['critical_pct'] > 50 else COLORS['reset']
+        print(f"  >{thresholds['warning']}s:         "
+              f"{color}{stats['critical']} proofs ({stats['critical_pct']:.1f}%){COLORS['reset']}")
 
 def setup_telegram():
     print("\nTelegram Bot Setup:")
