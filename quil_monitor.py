@@ -342,7 +342,8 @@ class QuilNodeMonitor:
                 'cpu': {'total': 0, 'avg_time': 0}
             }
 
-def get_daily_earnings(self, date):
+
+    def get_daily_earnings(self, date):
         try:
             yesterday = (datetime.strptime(date, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d')
             
@@ -379,7 +380,6 @@ def get_daily_earnings(self, date):
             else:
                 last_run = current_time - timedelta(days=1)
 
-            # Check if it's a new day and within configured time
             if (current_time.date() > last_run.date() and 
                 current_time.hour == TELEGRAM_CONFIG['daily_report_hour'] and 
                 current_time.minute >= TELEGRAM_CONFIG['daily_report_minute']):
@@ -404,7 +404,7 @@ def get_daily_earnings(self, date):
             
         return earnings_data
 
-def display_stats(self):
+    def display_stats(self):
         print("\n=== QUIL Node Statistics ===")
         current_time = datetime.now()
         print(f"Time: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
