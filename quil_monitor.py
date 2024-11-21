@@ -351,14 +351,18 @@ def get_daily_earnings(self, date):
                 
             if date not in self.history['daily_balance']:
                 if date == datetime.now().strftime('%Y-%m-%d'):
-                    current_balance = self.get_node_info()['owned']
+                    node_info = self.get_node_info()
+                    if node_info is None:
+                        return 0
+                    current_balance = node_info['owned']
                 else:
                     return 0
             else:
                 current_balance = self.history['daily_balance'][date]
             
             yesterday_balance = self.history['daily_balance'][yesterday]
-            return current_balance - yesterday_balance
+            earnings = current_balance - yesterday_balance
+            return earnings
             
         except Exception as e:
             print(f"Error calculating earnings for {date}: {e}")
