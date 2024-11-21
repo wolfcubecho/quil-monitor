@@ -263,17 +263,9 @@ class QuilNodeMonitor:
             seniority_match = re.search(r'Seniority: (\d+)', result.stdout)
             seniority = int(seniority_match.group(1)) if seniority_match else 0
 
-            # Get active workers from the shard logs
-            workers_cmd = 'journalctl -u ceremonyclient.service --since "1 minute ago" --until "now" --no-hostname -o cat | grep -i "creating data shard ring proof" | tail -n 1'
-            try:
-                workers_result = subprocess.run(workers_cmd, shell=True, capture_output=True, text=True)
-                if workers_result.stdout.strip():
-                    data = json.loads(workers_result.stdout.strip())
-                    active_workers = data.get('active_workers', 0)
-                else:
-                    active_workers = 0
-            except:
-                active_workers = 0
+            # Get active workers from node info
+            workers_match = re.search(r'Max Frame: (\d+)', result.stdout)
+            active_workers = int(workers_match.group(1)) if workers_match else 0
 
             # Get balance
             owned_balance_match = re.search(r'Owned balance: ([\d.]+) QUIL', result.stdout)
@@ -293,7 +285,7 @@ class QuilNodeMonitor:
         except Exception as e:
             print(f"Error getting node info: {e}")
             return None
-
+            
     def get_processing_metrics(self, date=None):
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
