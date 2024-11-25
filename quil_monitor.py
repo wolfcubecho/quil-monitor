@@ -544,8 +544,11 @@ class QuilNodeMonitor:
             
             # Calculate landing rate averages
             daily_landing_avg = sum(landing_rates) / len(landing_rates) if landing_rates else 0
-            weekly_landing_avg = daily_landing_avg
-            monthly_landing_avg = daily_landing_avg  # Using 7-day average for monthly too since we don't store 30 days
+            
+            # Color code the landing rate
+            landing_color = (COLORS['green'] if daily_landing_avg >= THRESHOLDS['landing_rate']['good']
+                          else COLORS['yellow'] if daily_landing_avg >= THRESHOLDS['landing_rate']['warning']
+                          else COLORS['red'])
 
             print(f"\nNode Information:")
             print(f"Ring:            {node_info['ring']}")
@@ -554,15 +557,12 @@ class QuilNodeMonitor:
             print(f"QUIL Price:      ${quil_price:.4f}")
             print(f"QUIL on Node:    {node_info['total']:.6f}")
             
-            # Color code the landing rate averages
-            daily_color = (COLORS['green'] if daily_landing_avg >= THRESHOLDS['landing_rate']['good']
-                         else COLORS['yellow'] if daily_landing_avg >= THRESHOLDS['landing_rate']['warning']
-                         else COLORS['red'])
-            
-            print("\nAverages (Daily/Weekly/Monthly):")
-            print(f"Earnings:     {daily_avg:.6f}/{weekly_avg:.6f}/{monthly_avg:.6f} QUIL")
-            print(f"USD:          ${daily_avg * quil_price:.2f}/${weekly_avg * quil_price:.2f}/${monthly_avg * quil_price:.2f}")
-            print(f"Landing Rate: {daily_color}{daily_landing_avg:.2f}%{COLORS['reset']} avg over past week")
+            print(f"\nDaily Average:   {daily_avg:.6f} QUIL // ${daily_avg * quil_price:.2f} // "
+                  f"{landing_color}{daily_landing_avg:.2f}%{COLORS['reset']}")
+            print(f"Weekly Average:  {weekly_avg:.6f} QUIL // ${weekly_avg * quil_price:.2f} // "
+                  f"{landing_color}{daily_landing_avg:.2f}%{COLORS['reset']}")
+            print(f"Monthly Average: {monthly_avg:.6f} QUIL // ${monthly_avg * quil_price:.2f} // "
+                  f"{landing_color}{daily_landing_avg:.2f}%{COLORS['reset']}")
 
         # Today's Stats and Processing Analysis
         print(f"\nToday's Stats ({today}):")
