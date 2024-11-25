@@ -35,6 +35,10 @@ THRESHOLDS = {
     'cpu': {
         'good': 20,      # 0-20s
         'warning': 30    # 20-30s, >30s critical
+    },
+    'landing_rate': {
+        'good': 80,      # >80%
+        'warning': 70    # 70-80%, <70% critical
     }
 }
 
@@ -140,7 +144,7 @@ class TelegramNotifier:
             print(f"Failed to send Telegram message: {e}")
 
     def send_daily_summary(self, balance: float, earnings: float, avg_earnings: float, 
-                         metrics: dict, quil_price: float):
+                         metrics: dict, quil_price: float, landing_rate: dict):
         if not self.config['enabled'] or not self.is_valid_config():
             return
 
@@ -159,7 +163,9 @@ class TelegramNotifier:
                 f"Date: {current_date}\n\n"
                 f"💰 Balance: {balance:.6f} QUIL (${balance * quil_price:.2f})\n"
                 f"📈 Daily Earnings: {earnings:.6f} QUIL (${earnings * quil_price:.2f})\n"
-                f"🔄 {abs(earn_diff_pct):.1f}% {comparison} than average\n\n"
+                f"🔄 {abs(earn_diff_pct):.1f}% {comparison} than average\n"
+                f"🎯 Landing Rate: {landing_rate['landing_rate']:.2f}% "
+                f"({landing_rate['transactions']}/{landing_rate['frames']} frames)\n\n"
                 f"⚡ Processing Performance:\n"
                 f"Creation: {metrics['creation']['avg_time']:.2f}s avg ({metrics['creation']['total']} proofs)\n"
                 f"Submission: {metrics['submission']['avg_time']:.2f}s avg\n"
@@ -180,9 +186,10 @@ class TelegramNotifier:
 class QuilNodeMonitor:
     def __init__(self, log_file="quil_metrics.json"):
         self.log_file = log_file
-        self.history = {'daily_balance': {}, 'processing_metrics': {}}
+        self.history = {'daily_balance': {}, 'processing_metrics': {}, 'landing_rates': {}}
         self.load_history()
         self.node_binary = self._get_latest_node_binary()
+        self.qclient_binary = self._get_latest_qclient_binary()
         self.telegram = TelegramNotifier(TELEGRAM_CONFIG)
         self.last_report_check = datetime.now().replace(hour=0, minute=0, second=0)
 
@@ -214,6 +221,34 @@ class QuilNodeMonitor:
             print(f"Error finding node binary: {e}")
             sys.exit(1)
 
+    def _get_latest_qclient_binary(self):
+        try:
+            qclient_binaries = glob.glob('./qclient-*-linux-amd64')
+            if not qclient_binaries:
+                raise Exception("No qclient binary found")
+            
+            def get_version_tuple(binary):
+                version_match = re.search(r'qclient-(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?-linux-amd64', binary)
+                if version_match:
+                    parts = list(version_match.groups())
+                    parts[3] = parts[3] if parts[3] is not None else '0'
+                    return tuple(int(x) for x in parts)
+                return (0, 0, 0, 0)
+
+            qclient_binaries.sort(key=get_version_tuple, reverse=True)
+            latest_binary = qclient_binaries[0]
+            
+            if not os.path.exists(latest_binary):
+                raise Exception(f"Binary {latest_binary} not found")
+            if not os.access(latest_binary, os.X_OK):
+                os.chmod(latest_binary, 0o755)
+            
+            print(f"Using qclient binary: {latest_binary}")
+            return latest_binary
+        except Exception as e:
+            print(f"Error finding qclient binary: {e}")
+            sys.exit(1)
+
     def load_history(self):
         if os.path.exists(self.log_file):
             try:
@@ -223,6 +258,8 @@ class QuilNodeMonitor:
                         self.history['daily_balance'].update(saved_data['daily_balance'])
                     if 'processing_metrics' in saved_data:
                         self.history['processing_metrics'].update(saved_data['processing_metrics'])
+                    if 'landing_rates' in saved_data:
+                        self.history['landing_rates'].update(saved_data['landing_rates'])
             except Exception as e:
                 print(f"Error loading history (will start fresh): {e}")
 
@@ -263,7 +300,7 @@ class QuilNodeMonitor:
             seniority_match = re.search(r'Seniority: (\d+)', result.stdout)
             seniority = int(seniority_match.group(1)) if seniority_match else 0
 
-            # Get active workers correctly from node info
+            # Get active workers
             workers_match = re.search(r'Active Workers: (\d+)', result.stdout)
             active_workers = int(workers_match.group(1)) if workers_match else 0
 
@@ -285,7 +322,86 @@ class QuilNodeMonitor:
         except Exception as e:
             print(f"Error getting node info: {e}")
             return None
+
+   # End of first script:
+    def get_coin_data(self, start_time, end_time):
+        try:
+            result = subprocess.run(
+                [self.qclient_binary, 'token', 'coins', 'metadata'],
+                capture_output=True, text=True
+            )
             
+            if result.returncode != 0:
+                return None
+
+            coins = []
+            for line in result.stdout.splitlines():
+                try:
+                    # Parse the coin data
+                    amount_match = re.search(r'([\d.]+) QUIL', line)
+                    frame_match = re.search(r'Frame (\d+)', line)
+                    timestamp_match = re.search(r'Timestamp ([\d-]+T[\d:]+Z)', line)
+                    
+                    if amount_match and frame_match and timestamp_match:
+                        amount = float(amount_match.group(1))
+                        frame = int(frame_match.group(1))
+                        timestamp = datetime.strptime(timestamp_match.group(1), '%Y-%m-%dT%H:%M:%SZ')
+                        
+                        if start_time <= timestamp <= end_time:
+                            coins.append({
+                                'amount': amount,
+                                'frame': frame,
+                                'timestamp': timestamp
+                            })
+                except Exception as e:
+                    continue
+
+            return coins
+        except Exception as e:
+            print(f"Error getting coin data: {e}")
+            return None
+
+    def calculate_landing_rate(self, date=None):
+        if date is None:
+            date = datetime.now().strftime('%Y-%m-%d')
+            
+        try:
+            # Set time range for the given date
+            start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
+            end_time = datetime.strptime(f"{date} 23:59:59", '%Y-%m-%d %H:%M:%S')
+            
+            # Get coin data for the time range
+            coins = self.get_coin_data(start_time, end_time)
+            if not coins:
+                return {'landing_rate': 0, 'transactions': 0, 'frames': 0}
+            
+            # Get total successful transactions (coins landed)
+            transactions = len(coins)
+            
+            # Get processing metrics for total frames
+            metrics = self.get_processing_metrics(date)
+            total_frames = metrics['creation']['total']
+            
+            # Calculate landing rate
+            landing_rate = (transactions / total_frames * 100) if total_frames > 0 else 0
+            
+            # Store in history
+            if 'landing_rates' not in self.history:
+                self.history['landing_rates'] = {}
+            
+            self.history['landing_rates'][date] = {
+                'landing_rate': landing_rate,
+                'transactions': transactions,
+                'frames': total_frames
+            }
+            self._save_history()
+            
+            return self.history['landing_rates'][date]
+            
+        except Exception as e:
+            print(f"Error calculating landing rate: {e}")
+            return {'landing_rate': 0, 'transactions': 0, 'frames': 0}
+
     def get_processing_metrics(self, date=None):
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
@@ -342,7 +458,6 @@ class QuilNodeMonitor:
                 'cpu': {'total': 0, 'avg_time': 0}
             }
 
-
     def get_daily_earnings(self, date):
         try:
             yesterday = (datetime.strptime(date, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d')
@@ -369,6 +484,17 @@ class QuilNodeMonitor:
             print(f"Error calculating earnings for {date}: {e}")
             return 0
 
+    def get_earnings_history(self, days=7):
+        earnings_data = []
+        today = datetime.now().date()
+        
+        for i in range(days):
+            date = (today - timedelta(days=i)).strftime('%Y-%m-%d')
+            earnings = self.get_daily_earnings(date)
+            earnings_data.append((date, earnings))
+            
+        return earnings_data
+
     def check_daily_report_time(self):
         current_time = datetime.now()
         last_run_file = "last_report.txt"
@@ -393,17 +519,6 @@ class QuilNodeMonitor:
         
         return False
 
-    def get_earnings_history(self, days=7):
-        earnings_data = []
-        today = datetime.now().date()
-        
-        for i in range(days):
-            date = (today - timedelta(days=i)).strftime('%Y-%m-%d')
-            earnings = self.get_daily_earnings(date)
-            earnings_data.append((date, earnings))
-            
-        return earnings_data
-
     def display_stats(self):
         print("\n=== QUIL Node Statistics ===")
         current_time = datetime.now()
@@ -416,9 +531,10 @@ class QuilNodeMonitor:
         today = current_time.strftime('%Y-%m-%d')
         today_earnings = self.get_daily_earnings(today)
         today_metrics = self.get_processing_metrics(today)
+        today_landing = self.calculate_landing_rate(today)
         
         if node_info:
-            earnings_data = self.get_earnings_history(7)  # Get last 7 days
+            earnings_data = self.get_earnings_history(7)
             daily_avg = sum(earn for _, earn in earnings_data) / len(earnings_data) if earnings_data else 0
             weekly_avg = daily_avg * 7
             monthly_avg = daily_avg * 30
@@ -437,6 +553,13 @@ class QuilNodeMonitor:
         print(f"\nToday's Stats ({today}):")
         print(f"Earnings:        {today_earnings:.6f} QUIL // ${today_earnings * quil_price:.2f}")
         
+        # Color code the landing rate
+        landing_color = (COLORS['green'] if today_landing['landing_rate'] >= THRESHOLDS['landing_rate']['good']
+                        else COLORS['yellow'] if today_landing['landing_rate'] >= THRESHOLDS['landing_rate']['warning']
+                        else COLORS['red'])
+        print(f"Landing Rate:    {landing_color}{today_landing['landing_rate']:.2f}%{COLORS['reset']} "
+              f"({today_landing['transactions']} transactions / {today_landing['frames']} frames)")
+        
         print("\nProcessing Analysis:")
         self.display_processing_section("Creation Stage (Network Latency)", 
                                      today_metrics['creation'], 
@@ -452,11 +575,22 @@ class QuilNodeMonitor:
         print("\nEarnings History:")
         for date, earnings in self.get_earnings_history(7):
             metrics = self.history['processing_metrics'].get(date, {})
+            landing_data = self.history['landing_rates'].get(date, {})
+            landing_rate = landing_data.get('landing_rate', 0)
+            transactions = landing_data.get('transactions', 0)
+            frames = landing_data.get('frames', 0)
+            
             cpu_info = metrics.get('cpu', {})
-            total_proofs = metrics.get('creation', {}).get('total', 0)
             avg_cpu = cpu_info.get('avg_time', 0)
+            
+            landing_color = (COLORS['green'] if landing_rate >= THRESHOLDS['landing_rate']['good']
+                           else COLORS['yellow'] if landing_rate >= THRESHOLDS['landing_rate']['warning']
+                           else COLORS['red'])
+            
             print(f"{date}: {earnings:.6f} QUIL // ${earnings * quil_price:.2f} "
-                  f"(Avg Process: {avg_cpu:.2f}s, {total_proofs} proofs)")
+                  f"(Landing Rate: {landing_color}{landing_rate:.2f}%{COLORS['reset']}, "
+                  f"{transactions}/{frames} frames, "
+                  f"Avg Process: {avg_cpu:.2f}s)")
 
         # Check for daily report
         if self.check_daily_report_time():
@@ -465,7 +599,8 @@ class QuilNodeMonitor:
                 earnings=today_earnings,
                 avg_earnings=daily_avg,
                 metrics=today_metrics,
-                quil_price=quil_price
+                quil_price=quil_price,
+                landing_rate=today_landing
             )
 
     def display_processing_section(self, title, stats, thresholds):
