@@ -519,7 +519,18 @@ class QuilNodeMonitor:
         
         return False
 
-    def display_stats(self):
+    def get_landing_rate_history(self, days=7):
+        landing_data = []
+        today = datetime.now().date()
+        
+        for i in range(days):
+            date = (today - timedelta(days=i)).strftime('%Y-%m-%d')
+            if date in self.history['landing_rates']:
+                landing_data.append(self.history['landing_rates'][date]['landing_rate'])
+            
+        return landing_data
+        
+def display_stats(self):
         print("\n=== QUIL Node Statistics ===")
         current_time = datetime.now()
         print(f"Time: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -535,9 +546,17 @@ class QuilNodeMonitor:
         
         if node_info:
             earnings_data = self.get_earnings_history(7)
+            landing_rates = self.get_landing_rate_history(7)
+            
+            # Calculate earnings averages
             daily_avg = sum(earn for _, earn in earnings_data) / len(earnings_data) if earnings_data else 0
             weekly_avg = daily_avg * 7
             monthly_avg = daily_avg * 30
+            
+            # Calculate landing rate averages
+            daily_landing_avg = sum(landing_rates) / len(landing_rates) if landing_rates else 0
+            weekly_landing_avg = daily_landing_avg
+            monthly_landing_avg = daily_landing_avg  # Using 7-day average for monthly too since we don't store 30 days
 
             print(f"\nNode Information:")
             print(f"Ring:            {node_info['ring']}")
@@ -545,9 +564,23 @@ class QuilNodeMonitor:
             print(f"Seniority:      {node_info['seniority']}")
             print(f"QUIL Price:      ${quil_price:.4f}")
             print(f"QUIL on Node:    {node_info['total']:.6f}")
-            print(f"Daily Average:   {daily_avg:.6f} QUIL // ${daily_avg * quil_price:.2f}")
-            print(f"Weekly Average:  {weekly_avg:.6f} QUIL // ${weekly_avg * quil_price:.2f}")
-            print(f"Monthly Average: {monthly_avg:.6f} QUIL // ${monthly_avg * quil_price:.2f}")
+            
+            # Color code the landing rate averages
+            daily_color = (COLORS['green'] if daily_landing_avg >= THRESHOLDS['landing_rate']['good']
+                         else COLORS['yellow'] if daily_landing_avg >= THRESHOLDS['landing_rate']['warning']
+                         else COLORS['red'])
+            
+            print("\nDaily Averages:")
+            print(f"Earnings:        {daily_avg:.6f} QUIL // ${daily_avg * quil_price:.2f}")
+            print(f"Landing Rate:    {daily_color}{daily_landing_avg:.2f}%{COLORS['reset']}")
+            
+            print("\nWeekly Averages:")
+            print(f"Earnings:        {weekly_avg:.6f} QUIL // ${weekly_avg * quil_price:.2f}")
+            print(f"Landing Rate:    {daily_color}{weekly_landing_avg:.2f}%{COLORS['reset']}")
+            
+            print("\nMonthly Averages:")
+            print(f"Earnings:        {monthly_avg:.6f} QUIL // ${monthly_avg * quil_price:.2f}")
+            print(f"Landing Rate:    {daily_color}{monthly_landing_avg:.2f}%{COLORS['reset']}")
 
         # Today's Stats and Processing Analysis
         print(f"\nToday's Stats ({today}):")
