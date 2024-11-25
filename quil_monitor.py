@@ -292,19 +292,15 @@ class QuilNodeMonitor:
             if result.returncode != 0:
                 return None
 
-            # Get ring number
             ring_match = re.search(r'Prover Ring: (\d+)', result.stdout)
             ring = int(ring_match.group(1)) if ring_match else 0
 
-            # Get seniority
             seniority_match = re.search(r'Seniority: (\d+)', result.stdout)
             seniority = int(seniority_match.group(1)) if seniority_match else 0
 
-            # Get active workers
             workers_match = re.search(r'Active Workers: (\d+)', result.stdout)
             active_workers = int(workers_match.group(1)) if workers_match else 0
 
-            # Get balance
             owned_balance_match = re.search(r'Owned balance: ([\d.]+) QUIL', result.stdout)
             owned_balance = float(owned_balance_match.group(1)) if owned_balance_match else 0
 
@@ -323,7 +319,6 @@ class QuilNodeMonitor:
             print(f"Error getting node info: {e}")
             return None
 
-   # End of first script:
     def get_coin_data(self, start_time, end_time):
         try:
             result = subprocess.run(
@@ -337,7 +332,6 @@ class QuilNodeMonitor:
             coins = []
             for line in result.stdout.splitlines():
                 try:
-                    # Parse the coin data
                     amount_match = re.search(r'([\d.]+) QUIL', line)
                     frame_match = re.search(r'Frame (\d+)', line)
                     timestamp_match = re.search(r'Timestamp ([\d-]+T[\d:]+Z)', line)
@@ -366,26 +360,19 @@ class QuilNodeMonitor:
             date = datetime.now().strftime('%Y-%m-%d')
             
         try:
-            # Set time range for the given date
             start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
             end_time = datetime.strptime(f"{date} 23:59:59", '%Y-%m-%d %H:%M:%S')
             
-            # Get coin data for the time range
             coins = self.get_coin_data(start_time, end_time)
             if not coins:
                 return {'landing_rate': 0, 'transactions': 0, 'frames': 0}
             
-            # Get total successful transactions (coins landed)
             transactions = len(coins)
-            
-            # Get processing metrics for total frames
             metrics = self.get_processing_metrics(date)
             total_frames = metrics['creation']['total']
             
-            # Calculate landing rate
             landing_rate = (transactions / total_frames * 100) if total_frames > 0 else 0
             
-            # Store in history
             if 'landing_rates' not in self.history:
                 self.history['landing_rates'] = {}
             
@@ -519,6 +506,7 @@ class QuilNodeMonitor:
         
         return False
 
+    # New method for getting landing rate history
     def get_landing_rate_history(self, days=7):
         landing_data = []
         today = datetime.now().date()
@@ -529,8 +517,9 @@ class QuilNodeMonitor:
                 landing_data.append(self.history['landing_rates'][date]['landing_rate'])
             
         return landing_data
-        
-def display_stats(self):
+
+    # Updated display_stats method
+    def display_stats(self):
         print("\n=== QUIL Node Statistics ===")
         current_time = datetime.now()
         print(f"Time: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -570,17 +559,10 @@ def display_stats(self):
                          else COLORS['yellow'] if daily_landing_avg >= THRESHOLDS['landing_rate']['warning']
                          else COLORS['red'])
             
-            print("\nDaily Averages:")
-            print(f"Earnings:        {daily_avg:.6f} QUIL // ${daily_avg * quil_price:.2f}")
-            print(f"Landing Rate:    {daily_color}{daily_landing_avg:.2f}%{COLORS['reset']}")
-            
-            print("\nWeekly Averages:")
-            print(f"Earnings:        {weekly_avg:.6f} QUIL // ${weekly_avg * quil_price:.2f}")
-            print(f"Landing Rate:    {daily_color}{weekly_landing_avg:.2f}%{COLORS['reset']}")
-            
-            print("\nMonthly Averages:")
-            print(f"Earnings:        {monthly_avg:.6f} QUIL // ${monthly_avg * quil_price:.2f}")
-            print(f"Landing Rate:    {daily_color}{monthly_landing_avg:.2f}%{COLORS['reset']}")
+            print("\nAverages (Daily/Weekly/Monthly):")
+            print(f"Earnings:     {daily_avg:.6f}/{weekly_avg:.6f}/{monthly_avg:.6f} QUIL")
+            print(f"USD:          ${daily_avg * quil_price:.2f}/${weekly_avg * quil_price:.2f}/${monthly_avg * quil_price:.2f}")
+            print(f"Landing Rate: {daily_color}{daily_landing_avg:.2f}%{COLORS['reset']} avg over past week")
 
         # Today's Stats and Processing Analysis
         print(f"\nToday's Stats ({today}):")
@@ -604,8 +586,8 @@ def display_stats(self):
                                      today_metrics['cpu'], 
                                      THRESHOLDS['cpu'])
 
-        # Earnings History
-        print("\nEarnings History:")
+        # Earnings History with Landing Rates
+        print("\nHistory (Last 7 Days):")
         for date, earnings in self.get_earnings_history(7):
             metrics = self.history['processing_metrics'].get(date, {})
             landing_data = self.history['landing_rates'].get(date, {})
