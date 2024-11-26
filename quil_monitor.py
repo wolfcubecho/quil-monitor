@@ -322,19 +322,22 @@ class QuilNodeMonitor:
     def get_coin_data(self, start_time, end_time):
         try:
             result = subprocess.run(
-                [self.qclient_binary, 'token', 'coins', 'metadata'],
-                capture_output=True, text=True
+                [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
+                capture_output=True, text=True,
+                encoding='utf-8'
             )
             
             if result.returncode != 0:
+                print(f"Error running qclient: {result.stderr}")
                 return None
 
             coins = []
             for line in result.stdout.splitlines():
                 try:
-                    amount_match = re.search(r'([\d.]+) QUIL', line)
-                    frame_match = re.search(r'Frame (\d+)', line)
-                    timestamp_match = re.search(r'Timestamp ([\d-]+T[\d:]+Z)', line)
+                    # Parse the coin data
+                    amount_match = re.search(r'([\d.]+)\s*QUIL', line)
+                    frame_match = re.search(r'Frame\s*(\d+)', line)
+                    timestamp_match = re.search(r'Timestamp\s*([\d-]+T[\d:]+Z)', line)
                     
                     if amount_match and frame_match and timestamp_match:
                         amount = float(amount_match.group(1))
