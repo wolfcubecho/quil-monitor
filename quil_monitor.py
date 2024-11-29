@@ -405,7 +405,7 @@ class QuilNodeMonitor:
                 return [coin for coin in self.coin_cache 
                        if start_time <= coin['timestamp'] <= end_time]
             return []
-
+            
     def calculate_landing_rate(self, date=None):
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
