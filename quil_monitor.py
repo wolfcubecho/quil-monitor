@@ -326,7 +326,7 @@ class QuilNodeMonitor:
             print(f"Error getting node info: {e}")
             return None
 
-    def get_coin_data(self, start_time, end_time):
+def get_coin_data(self, start_time, end_time):
         try:
             current_time = datetime.now()
             
