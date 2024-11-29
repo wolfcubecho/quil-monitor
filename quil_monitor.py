@@ -466,7 +466,7 @@ class QuilNodeMonitor:
         except Exception as e:
             print(f"Error calculating earnings for {date}: {e}")
             return 0
-
+            
     def get_earnings_history(self, days=7):
         earnings_data = []
         today = datetime.now().date()
