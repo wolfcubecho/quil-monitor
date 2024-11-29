@@ -335,13 +335,21 @@ class QuilNodeMonitor:
                     self.coin_cache = []
                     for date, coins in self.history['coin_data'].items():
                         for coin in coins:
-                            coin['timestamp'] = datetime.strptime(coin['timestamp'], '%Y-%m-%dT%H:%M:%SZ')
-                            self.coin_cache.extend(coins)
+                            # Add null check for timestamp
+                            if coin.get('timestamp'):
+                                try:
+                                    coin['timestamp'] = datetime.strptime(coin['timestamp'], '%Y-%m-%dT%H:%M:%SZ')
+                                    self.coin_cache.append(coin)
+                                except (ValueError, TypeError):
+                                    continue
     
                 # Check if we need to update cache (every 30 minutes)
                 last_update = None
-                if 'last_coin_update' in self.history:
-                    last_update = datetime.strptime(self.history['last_coin_update'], '%Y-%m-%dT%H:%M:%SZ')
+                if self.history.get('last_coin_update'):
+                    try:
+                        last_update = datetime.strptime(self.history['last_coin_update'], '%Y-%m-%dT%H:%M:%SZ')
+                    except (ValueError, TypeError):
+                        last_update = None
     
                 if (self.coin_cache is None or last_update is None or 
                     (current_time - last_update).total_seconds() > 1800):  # 30 minutes
@@ -355,7 +363,7 @@ class QuilNodeMonitor:
                     if result.returncode != 0:
                         if self.coin_cache:  # Use cached data if available
                             return [coin for coin in self.coin_cache 
-                                   if start_time <= coin['timestamp'] <= end_time]
+                                   if isinstance(coin.get('timestamp'), datetime) and start_time <= coin['timestamp'] <= end_time]
                         return []
     
                     new_coins = []
@@ -366,12 +374,14 @@ class QuilNodeMonitor:
                             timestamp_match = re.search(r'Timestamp\s*([\d-]+T[\d:]+Z)', line)
                             
                             if amount_match and frame_match and timestamp_match:
-                                coin = {
-                                    'amount': float(amount_match.group(1)),
-                                    'frame': int(frame_match.group(1)),
-                                    'timestamp': datetime.strptime(timestamp_match.group(1), '%Y-%m-%dT%H:%M:%SZ')
-                                }
-                                new_coins.append(coin)
+                                timestamp_str = timestamp_match.group(1)
+                                if timestamp_str:  # Make sure we have a timestamp
+                                    coin = {
+                                        'amount': float(amount_match.group(1)),
+                                        'frame': int(frame_match.group(1)),
+                                        'timestamp': datetime.strptime(timestamp_str, '%Y-%m-%dT%H:%M:%SZ')
+                                    }
+                                    new_coins.append(coin)
                         except Exception:
                             continue
     
@@ -383,27 +393,38 @@ class QuilNodeMonitor:
                         existing_frames = {c['frame'] for c in self.coin_cache}
                         self.coin_cache.extend([c for c in new_coins if c['frame'] not in existing_frames])
     
-                    # Update history
+                    # Update history - with proper timestamp conversion
                     self.history['coin_data'] = {
                         date: [
-                            {**coin, 'timestamp': coin['timestamp'].strftime('%Y-%m-%dT%H:%M:%SZ')}
+                            {
+                                'amount': coin['amount'],
+                                'frame': coin['frame'],
+                                'timestamp': coin['timestamp'].strftime('%Y-%m-%dT%H:%M:%SZ')
+                            }
                             for coin in self.coin_cache
-                            if coin['timestamp'].strftime('%Y-%m-%d') == date
+                            if isinstance(coin.get('timestamp'), datetime) and 
+                               coin['timestamp'].strftime('%Y-%m-%d') == date
                         ]
-                        for date in set(coin['timestamp'].strftime('%Y-%m-%d') for coin in self.coin_cache)
+                        for date in set(
+                            coin['timestamp'].strftime('%Y-%m-%d') 
+                            for coin in self.coin_cache 
+                            if isinstance(coin.get('timestamp'), datetime)
+                        )
                     }
                     self.history['last_coin_update'] = current_time.strftime('%Y-%m-%dT%H:%M:%SZ')
                     self._save_history()
     
                 # Return filtered data from cache
                 return [coin for coin in self.coin_cache 
-                       if start_time <= coin['timestamp'] <= end_time]
+                       if isinstance(coin.get('timestamp'), datetime) and 
+                       start_time <= coin['timestamp'] <= end_time]
                 
             except Exception as e:
                 print(f"Error getting coin data: {e}")
                 if self.coin_cache:  # Use cached data if available
                     return [coin for coin in self.coin_cache 
-                           if start_time <= coin['timestamp'] <= end_time]
+                           if isinstance(coin.get('timestamp'), datetime) and 
+                           start_time <= coin['timestamp'] <= end_time]
                 return []
             
     def calculate_landing_rate(self, date=None):
