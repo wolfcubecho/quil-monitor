@@ -448,27 +448,20 @@ class QuilNodeMonitor:
                 'cpu': {'total': 0, 'avg_time': 0}
             }
 
-    def get_daily_earnings(self, date):
+def get_daily_earnings(self, date):
         try:
-            yesterday = (datetime.strptime(date, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d')
+            # Set time range for the given date
+            start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
+            end_time = datetime.strptime(f"{date} 23:59:59", '%Y-%m-%d %H:%M:%S')
             
-            if yesterday not in self.history['daily_balance']:
+            # Get coins for this date
+            coins = self.get_coin_data(start_time, end_time)
+            if not coins:
                 return 0
-                
-            if date not in self.history['daily_balance']:
-                if date == datetime.now().strftime('%Y-%m-%d'):
-                    node_info = self.get_node_info()
-                    if node_info is None:
-                        return 0
-                    current_balance = node_info['owned']
-                else:
-                    return 0
-            else:
-                current_balance = self.history['daily_balance'][date]
             
-            yesterday_balance = self.history['daily_balance'][yesterday]
-            earnings = current_balance - yesterday_balance
-            return earnings
+            # Sum up all coin amounts for the day
+            daily_earnings = sum(coin['amount'] for coin in coins)
+            return daily_earnings
             
         except Exception as e:
             print(f"Error calculating earnings for {date}: {e}")
