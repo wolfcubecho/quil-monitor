@@ -186,9 +186,14 @@ class TelegramNotifier:
 class QuilNodeMonitor:
     def __init__(self, log_file="quil_metrics.json"):
         self.log_file = log_file
-        self.history = {'daily_balance': {}, 'processing_metrics': {}, 'landing_rates': {}}
-        self.coin_cache = None  # Add coin cache
-        self.last_cache_update = None
+        self.history = {
+            'daily_balance': {},
+            'processing_metrics': {},
+            'landing_rates': {},
+            'coin_data': {},  # Add coin storage to history
+            'last_coin_update': None
+        }
+        self.coin_cache = None
         self.load_history()
         self.node_binary = self._get_latest_node_binary()
         self.qclient_binary = self._get_latest_qclient_binary()
@@ -322,51 +327,84 @@ class QuilNodeMonitor:
             return None
 
     def get_coin_data(self, start_time, end_time):
-        try:
-            # Check if we need to update cache (every 5 minutes)
-            current_time = datetime.now()
-            if (self.coin_cache is None or 
-                self.last_cache_update is None or 
-                (current_time - self.last_cache_update).total_seconds() > 300):
-                
-                result = subprocess.run(
-                    [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
-                    capture_output=True, text=True,
-                    encoding='utf-8'
-                )
-                
-                if result.returncode != 0:
-                    return None
+    try:
+        current_time = datetime.now()
+        
+        # Convert stored coin data from history if needed
+        if self.coin_cache is None and 'coin_data' in self.history:
+            self.coin_cache = []
+            for date, coins in self.history['coin_data'].items():
+                for coin in coins:
+                    coin['timestamp'] = datetime.strptime(coin['timestamp'], '%Y-%m-%dT%H:%M:%SZ')
+                    self.coin_cache.extend(coins)
 
-                self.coin_cache = []
-                for line in result.stdout.splitlines():
-                    try:
-                        amount_match = re.search(r'([\d.]+)\s*QUIL', line)
-                        frame_match = re.search(r'Frame\s*(\d+)', line)
-                        timestamp_match = re.search(r'Timestamp\s*([\d-]+T[\d:]+Z)', line)
-                        
-                        if amount_match and frame_match and timestamp_match:
-                            amount = float(amount_match.group(1))
-                            frame = int(frame_match.group(1))
-                            timestamp = datetime.strptime(timestamp_match.group(1), '%Y-%m-%dT%H:%M:%SZ')
-                            
-                            self.coin_cache.append({
-                                'amount': amount,
-                                'frame': frame,
-                                'timestamp': timestamp
-                            })
-                    except Exception:
-                        continue
-                
-                self.last_cache_update = current_time
+        # Check if we need to update cache (every 30 minutes)
+        last_update = None
+        if 'last_coin_update' in self.history:
+            last_update = datetime.strptime(self.history['last_coin_update'], '%Y-%m-%dT%H:%M:%SZ')
 
-            # Filter cached data for requested time range
+        if (self.coin_cache is None or last_update is None or 
+            (current_time - last_update).total_seconds() > 1800):  # 30 minutes
+            
+            result = subprocess.run(
+                [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
+                capture_output=True, text=True,
+                encoding='utf-8'
+            )
+            
+            if result.returncode != 0:
+                if self.coin_cache:  # Use cached data if available
+                    return [coin for coin in self.coin_cache 
+                           if start_time <= coin['timestamp'] <= end_time]
+                return []
+
+            new_coins = []
+            for line in result.stdout.splitlines():
+                try:
+                    amount_match = re.search(r'([\d.]+)\s*QUIL', line)
+                    frame_match = re.search(r'Frame\s*(\d+)', line)
+                    timestamp_match = re.search(r'Timestamp\s*([\d-]+T[\d:]+Z)', line)
+                    
+                    if amount_match and frame_match and timestamp_match:
+                        coin = {
+                            'amount': float(amount_match.group(1)),
+                            'frame': int(frame_match.group(1)),
+                            'timestamp': datetime.strptime(timestamp_match.group(1), '%Y-%m-%dT%H:%M:%SZ')
+                        }
+                        new_coins.append(coin)
+                except Exception:
+                    continue
+
+            # Update cache with new coins
+            if self.coin_cache is None:
+                self.coin_cache = new_coins
+            else:
+                # Only add coins we don't already have
+                existing_frames = {c['frame'] for c in self.coin_cache}
+                self.coin_cache.extend([c for c in new_coins if c['frame'] not in existing_frames])
+
+            # Update history
+            self.history['coin_data'] = {
+                date: [
+                    {**coin, 'timestamp': coin['timestamp'].strftime('%Y-%m-%dT%H:%M:%SZ')}
+                    for coin in self.coin_cache
+                    if coin['timestamp'].strftime('%Y-%m-%d') == date
+                ]
+                for date in set(coin['timestamp'].strftime('%Y-%m-%d') for coin in self.coin_cache)
+            }
+            self.history['last_coin_update'] = current_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+            self._save_history()
+
+        # Return filtered data from cache
+        return [coin for coin in self.coin_cache 
+               if start_time <= coin['timestamp'] <= end_time]
+        
+    except Exception as e:
+        print(f"Error getting coin data: {e}")
+        if self.coin_cache:  # Use cached data if available
             return [coin for coin in self.coin_cache 
                    if start_time <= coin['timestamp'] <= end_time]
-            
-        except Exception as e:
-            print(f"Error getting coin data: {e}")
-            return None
+        return []
 
     def calculate_landing_rate(self, date=None):
         if date is None:
