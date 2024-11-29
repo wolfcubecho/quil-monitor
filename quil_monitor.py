@@ -187,6 +187,8 @@ class QuilNodeMonitor:
     def __init__(self, log_file="quil_metrics.json"):
         self.log_file = log_file
         self.history = {'daily_balance': {}, 'processing_metrics': {}, 'landing_rates': {}}
+        self.coin_cache = None  # Add coin cache
+        self.last_cache_update = None
         self.load_history()
         self.node_binary = self._get_latest_node_binary()
         self.qclient_binary = self._get_latest_qclient_binary()
@@ -321,39 +323,47 @@ class QuilNodeMonitor:
 
     def get_coin_data(self, start_time, end_time):
         try:
-            result = subprocess.run(
-                [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
-                capture_output=True, text=True,
-                encoding='utf-8'
-            )
-            
-            if result.returncode != 0:
-                print(f"Error running qclient: {result.stderr}")
-                return None
+            # Check if we need to update cache (every 5 minutes)
+            current_time = datetime.now()
+            if (self.coin_cache is None or 
+                self.last_cache_update is None or 
+                (current_time - self.last_cache_update).total_seconds() > 300):
+                
+                result = subprocess.run(
+                    [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
+                    capture_output=True, text=True,
+                    encoding='utf-8'
+                )
+                
+                if result.returncode != 0:
+                    return None
 
-            coins = []
-            for line in result.stdout.splitlines():
-                try:
-                    # Parse the coin data
-                    amount_match = re.search(r'([\d.]+)\s*QUIL', line)
-                    frame_match = re.search(r'Frame\s*(\d+)', line)
-                    timestamp_match = re.search(r'Timestamp\s*([\d-]+T[\d:]+Z)', line)
-                    
-                    if amount_match and frame_match and timestamp_match:
-                        amount = float(amount_match.group(1))
-                        frame = int(frame_match.group(1))
-                        timestamp = datetime.strptime(timestamp_match.group(1), '%Y-%m-%dT%H:%M:%SZ')
+                self.coin_cache = []
+                for line in result.stdout.splitlines():
+                    try:
+                        amount_match = re.search(r'([\d.]+)\s*QUIL', line)
+                        frame_match = re.search(r'Frame\s*(\d+)', line)
+                        timestamp_match = re.search(r'Timestamp\s*([\d-]+T[\d:]+Z)', line)
                         
-                        if start_time <= timestamp <= end_time:
-                            coins.append({
+                        if amount_match and frame_match and timestamp_match:
+                            amount = float(amount_match.group(1))
+                            frame = int(frame_match.group(1))
+                            timestamp = datetime.strptime(timestamp_match.group(1), '%Y-%m-%dT%H:%M:%SZ')
+                            
+                            self.coin_cache.append({
                                 'amount': amount,
                                 'frame': frame,
                                 'timestamp': timestamp
                             })
-                except Exception as e:
-                    continue
+                    except Exception:
+                        continue
+                
+                self.last_cache_update = current_time
 
-            return coins
+            # Filter cached data for requested time range
+            return [coin for coin in self.coin_cache 
+                   if start_time <= coin['timestamp'] <= end_time]
+            
         except Exception as e:
             print(f"Error getting coin data: {e}")
             return None
@@ -454,7 +464,7 @@ class QuilNodeMonitor:
             start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
             end_time = datetime.strptime(f"{date} 23:59:59", '%Y-%m-%d %H:%M:%S')
             
-            # Get coins for this date
+            # Get coins for this date from cache
             coins = self.get_coin_data(start_time, end_time)
             if not coins:
                 return 0
