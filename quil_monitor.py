@@ -448,7 +448,7 @@ class QuilNodeMonitor:
                 'cpu': {'total': 0, 'avg_time': 0}
             }
 
-def get_daily_earnings(self, date):
+    def get_daily_earnings(self, date):
         try:
             # Set time range for the given date
             start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
