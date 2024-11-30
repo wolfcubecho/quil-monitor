@@ -335,7 +335,6 @@ class QuilNodeMonitor:
                     self.coin_cache = []
                     for date, coins in self.history['coin_data'].items():
                         for coin in coins:
-                            # Add null check for timestamp
                             if coin.get('timestamp'):
                                 try:
                                     coin['timestamp'] = datetime.strptime(coin['timestamp'], '%Y-%m-%dT%H:%M:%SZ')
@@ -355,12 +354,13 @@ class QuilNodeMonitor:
                     (current_time - last_update).total_seconds() > 1800):  # 30 minutes
                     
                     result = subprocess.run(
-                        [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
+                        [self.qclient_binary, 'token', 'coins'],
                         capture_output=True, text=True,
                         encoding='utf-8'
                     )
                     
                     if result.returncode != 0:
+                        print(f"qclient error: {result.stderr}")
                         if self.coin_cache:  # Use cached data if available
                             return [coin for coin in self.coin_cache 
                                    if isinstance(coin.get('timestamp'), datetime) and start_time <= coin['timestamp'] <= end_time]
@@ -369,47 +369,33 @@ class QuilNodeMonitor:
                     new_coins = []
                     for line in result.stdout.splitlines():
                         try:
+                            # Simpler parsing without metadata
                             amount_match = re.search(r'([\d.]+)\s*QUIL', line)
-                            frame_match = re.search(r'Frame\s*(\d+)', line)
-                            timestamp_match = re.search(r'Timestamp\s*([\d-]+T[\d:]+Z)', line)
-                            
-                            if amount_match and frame_match and timestamp_match:
-                                timestamp_str = timestamp_match.group(1)
-                                if timestamp_str:  # Make sure we have a timestamp
-                                    coin = {
-                                        'amount': float(amount_match.group(1)),
-                                        'frame': int(frame_match.group(1)),
-                                        'timestamp': datetime.strptime(timestamp_str, '%Y-%m-%dT%H:%M:%SZ')
-                                    }
-                                    new_coins.append(coin)
-                        except Exception:
+                            if amount_match:
+                                coin = {
+                                    'amount': float(amount_match.group(1)),
+                                    'timestamp': current_time  # Use current time as we don't have exact timestamp
+                                }
+                                new_coins.append(coin)
+                        except Exception as e:
+                            print(f"Error parsing line: {line}, Error: {str(e)}")
                             continue
     
-                    # Update cache with new coins
-                    if self.coin_cache is None:
-                        self.coin_cache = new_coins
-                    else:
-                        # Only add coins we don't already have
-                        existing_frames = {c['frame'] for c in self.coin_cache}
-                        self.coin_cache.extend([c for c in new_coins if c['frame'] not in existing_frames])
+                    print(f"Found {len(new_coins)} coins")  # Debug output
     
-                    # Update history - with proper timestamp conversion
+                    # Update cache with new coins
+                    self.coin_cache = new_coins  # Just use new coins since we can't match frames
+    
+                    # Update history with the new data
+                    today = current_time.strftime('%Y-%m-%d')
                     self.history['coin_data'] = {
-                        date: [
+                        today: [
                             {
                                 'amount': coin['amount'],
-                                'frame': coin['frame'],
                                 'timestamp': coin['timestamp'].strftime('%Y-%m-%dT%H:%M:%SZ')
                             }
-                            for coin in self.coin_cache
-                            if isinstance(coin.get('timestamp'), datetime) and 
-                               coin['timestamp'].strftime('%Y-%m-%d') == date
+                            for coin in new_coins
                         ]
-                        for date in set(
-                            coin['timestamp'].strftime('%Y-%m-%d') 
-                            for coin in self.coin_cache 
-                            if isinstance(coin.get('timestamp'), datetime)
-                        )
                     }
                     self.history['last_coin_update'] = current_time.strftime('%Y-%m-%dT%H:%M:%SZ')
                     self._save_history()
