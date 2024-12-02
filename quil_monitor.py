@@ -472,35 +472,49 @@ class QuilNodeMonitor:
             date = datetime.now().strftime('%Y-%m-%d')
             
         try:
+            # First check if we have this date in history
+            if 'landing_rates' in self.history and date in self.history['landing_rates']:
+                return self.history['landing_rates'][date]
+
+            # If not in history, calculate from processing metrics
+            metrics = self.get_processing_metrics(date)
+            if not metrics:
+                return {'landing_rate': 0, 'transactions': 0, 'frames': 0}
+            
+            total_frames = metrics['creation']['total']
+            
+            # Get coin data for this date to count transactions
             start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
             end_time = datetime.strptime(f"{date} 23:59:59", '%Y-%m-%d %H:%M:%S')
             
-            coins = self.get_coin_data(start_time, end_time)
-            if not coins:
-                return {'landing_rate': 0, 'transactions': 0, 'frames': 0}
+            if 'coin_data' in self.history and date in self.history['coin_data']:
+                transactions = len(self.history['coin_data'][date])
+            else:
+                coins = self.get_coin_data(start_time, end_time)
+                transactions = len(coins) if coins else 0
             
-            transactions = len(coins)
-            metrics = self.get_processing_metrics(date)
-            total_frames = metrics['creation']['total']
-            
+            # Calculate landing rate
             landing_rate = (transactions / total_frames * 100) if total_frames > 0 else 0
             
-            if 'landing_rates' not in self.history:
-                self.history['landing_rates'] = {}
-            
-            self.history['landing_rates'][date] = {
+            # Store result
+            result = {
                 'landing_rate': landing_rate,
                 'transactions': transactions,
                 'frames': total_frames
             }
+            
+            if 'landing_rates' not in self.history:
+                self.history['landing_rates'] = {}
+                
+            self.history['landing_rates'][date] = result
             self._save_history()
             
-            return self.history['landing_rates'][date]
+            return result
             
         except Exception as e:
             print(f"Error calculating landing rate: {e}")
             return {'landing_rate': 0, 'transactions': 0, 'frames': 0}
-
+            
     def get_processing_metrics(self, date=None):
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
