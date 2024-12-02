@@ -267,9 +267,15 @@ class QuilNodeMonitor:
                         self.history['processing_metrics'].update(saved_data['processing_metrics'])
                     if 'landing_rates' in saved_data:
                         self.history['landing_rates'].update(saved_data['landing_rates'])
+                    if 'coin_data' in saved_data:
+                        self.history['coin_data'].update(saved_data['coin_data'])
+                    if 'last_coin_update' in saved_data:
+                        self.history['last_coin_update'] = saved_data['last_coin_update']
+                    if 'daily_earnings' in saved_data:
+                        self.history['daily_earnings'] = saved_data['daily_earnings']
             except Exception as e:
                 print(f"Error loading history (will start fresh): {e}")
-
+                
     def _save_history(self):
         try:
             with open(self.log_file, 'w') as f:
