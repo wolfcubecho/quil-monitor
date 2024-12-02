@@ -355,7 +355,7 @@ class QuilNodeMonitor:
                     (current_time - last_update).total_seconds() > 1800):  # 30 minutes
                     
                     result = subprocess.run(
-                        [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
+                        [self.qclient_binary, 'token', 'coins', 'metadata'],
                         capture_output=True, text=True,
                         encoding='utf-8'
                     )
