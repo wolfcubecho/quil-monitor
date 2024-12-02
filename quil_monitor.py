@@ -525,29 +525,27 @@ class QuilNodeMonitor:
 
     def get_daily_earnings(self, date):
         try:
-            # Set time range for the given date
-            start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
-            end_time = datetime.strptime(f"{date} 23:59:59", '%Y-%m-%d %H:%M:%S')
+            # Get the landing rates and frames for this date
+            landing_data = self.history['landing_rates'].get(date, {})
+            transactions = landing_data.get('transactions', 0)
             
-            # First check if we have historical data
-            if 'daily_earnings' in self.history and date in self.history['daily_earnings']:
-                return self.history['daily_earnings'][date]
-            
-            # Get coins for this date
-            coins = self.get_coin_data(start_time, end_time)
-            if not coins:
+            if transactions == 0:
                 return 0
+                
+            # If we have transactions in landing_rates, get the node balances
+            if date in self.history['daily_balance']:
+                current_balance = self.history['daily_balance'][date]
+                
+                # Try to get previous day's balance
+                prev_date = (datetime.strptime(date, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d')
+                prev_balance = self.history['daily_balance'].get(prev_date, current_balance)
+                
+                # If balance increased, that's earnings
+                if current_balance > prev_balance:
+                    earnings = current_balance - prev_balance
+                    return earnings
             
-            # Calculate total earnings (only positive amounts)
-            daily_earnings = sum(coin['amount'] for coin in coins if coin['amount'] > 0)
-            
-            # Store in history
-            if 'daily_earnings' not in self.history:
-                self.history['daily_earnings'] = {}
-            self.history['daily_earnings'][date] = daily_earnings
-            self._save_history()
-            
-            return daily_earnings
+            return 0
             
         except Exception as e:
             print(f"Error calculating earnings for {date}: {e}")
