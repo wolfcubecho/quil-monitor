@@ -335,6 +335,7 @@ class QuilNodeMonitor:
                     self.coin_cache = []
                     for date, coins in self.history['coin_data'].items():
                         for coin in coins:
+                            # Add null check for timestamp
                             if coin.get('timestamp'):
                                 try:
                                     coin['timestamp'] = datetime.strptime(coin['timestamp'], '%Y-%m-%dT%H:%M:%SZ')
@@ -354,13 +355,12 @@ class QuilNodeMonitor:
                     (current_time - last_update).total_seconds() > 1800):  # 30 minutes
                     
                     result = subprocess.run(
-                        [self.qclient_binary, 'token', 'coins'],
+                        [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
                         capture_output=True, text=True,
                         encoding='utf-8'
                     )
                     
                     if result.returncode != 0:
-                        print(f"qclient error: {result.stderr}")
                         if self.coin_cache:  # Use cached data if available
                             return [coin for coin in self.coin_cache 
                                    if isinstance(coin.get('timestamp'), datetime) and start_time <= coin['timestamp'] <= end_time]
@@ -369,33 +369,47 @@ class QuilNodeMonitor:
                     new_coins = []
                     for line in result.stdout.splitlines():
                         try:
-                            # Simpler parsing without metadata
                             amount_match = re.search(r'([\d.]+)\s*QUIL', line)
-                            if amount_match:
-                                coin = {
-                                    'amount': float(amount_match.group(1)),
-                                    'timestamp': current_time  # Use current time as we don't have exact timestamp
-                                }
-                                new_coins.append(coin)
-                        except Exception as e:
-                            print(f"Error parsing line: {line}, Error: {str(e)}")
+                            frame_match = re.search(r'Frame\s*(\d+)', line)
+                            timestamp_match = re.search(r'Timestamp\s*([\d-]+T[\d:]+Z)', line)
+                            
+                            if amount_match and frame_match and timestamp_match:
+                                timestamp_str = timestamp_match.group(1)
+                                if timestamp_str:  # Make sure we have a timestamp
+                                    coin = {
+                                        'amount': float(amount_match.group(1)),
+                                        'frame': int(frame_match.group(1)),
+                                        'timestamp': datetime.strptime(timestamp_str, '%Y-%m-%dT%H:%M:%SZ')
+                                    }
+                                    new_coins.append(coin)
+                        except Exception:
                             continue
     
-                    print(f"Found {len(new_coins)} coins")  # Debug output
-    
                     # Update cache with new coins
-                    self.coin_cache = new_coins  # Just use new coins since we can't match frames
+                    if self.coin_cache is None:
+                        self.coin_cache = new_coins
+                    else:
+                        # Only add coins we don't already have
+                        existing_frames = {c['frame'] for c in self.coin_cache}
+                        self.coin_cache.extend([c for c in new_coins if c['frame'] not in existing_frames])
     
-                    # Update history with the new data
-                    today = current_time.strftime('%Y-%m-%d')
+                    # Update history - with proper timestamp conversion
                     self.history['coin_data'] = {
-                        today: [
+                        date: [
                             {
                                 'amount': coin['amount'],
+                                'frame': coin['frame'],
                                 'timestamp': coin['timestamp'].strftime('%Y-%m-%dT%H:%M:%SZ')
                             }
-                            for coin in new_coins
+                            for coin in self.coin_cache
+                            if isinstance(coin.get('timestamp'), datetime) and 
+                               coin['timestamp'].strftime('%Y-%m-%d') == date
                         ]
+                        for date in set(
+                            coin['timestamp'].strftime('%Y-%m-%d') 
+                            for coin in self.coin_cache 
+                            if isinstance(coin.get('timestamp'), datetime)
+                        )
                     }
                     self.history['last_coin_update'] = current_time.strftime('%Y-%m-%dT%H:%M:%SZ')
                     self._save_history()
@@ -509,48 +523,28 @@ class QuilNodeMonitor:
             start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
             end_time = datetime.strptime(f"{date} 23:59:59", '%Y-%m-%d %H:%M:%S')
             
+            # First check if we have historical data
+            if 'daily_earnings' in self.history and date in self.history['daily_earnings']:
+                return self.history['daily_earnings'][date]
+            
             # Get coins for this date
-            result = subprocess.run(
-                [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
-                capture_output=True, text=True,
-                encoding='utf-8'
-            )
-
-            if result.returncode != 0:
-                # If we have historical data for this date, use it
-                if date in self.history.get('daily_earnings', {}):
-                    return self.history['daily_earnings'][date]
+            coins = self.get_coin_data(start_time, end_time)
+            if not coins:
                 return 0
-
-            daily_earnings = 0
-            for line in result.stdout.splitlines():
-                try:
-                    # Only process lines containing timestamps for our date
-                    if date not in line:
-                        continue
-                        
-                    amount_match = re.search(r'([\d.]+)\s*QUIL', line)
-                    if amount_match:
-                        amount = float(amount_match.group(1))
-                        # Only count positive amounts (incoming coins)
-                        if amount > 0:
-                            daily_earnings += amount
-                except Exception:
-                    continue
-
-            # Store the earnings in history
+            
+            # Calculate total earnings (only positive amounts)
+            daily_earnings = sum(coin['amount'] for coin in coins if coin['amount'] > 0)
+            
+            # Store in history
             if 'daily_earnings' not in self.history:
                 self.history['daily_earnings'] = {}
             self.history['daily_earnings'][date] = daily_earnings
             self._save_history()
-
+            
             return daily_earnings
             
         except Exception as e:
             print(f"Error calculating earnings for {date}: {e}")
-            # If we have historical data for this date, use it
-            if date in self.history.get('daily_earnings', {}):
-                return self.history['daily_earnings'][date]
             return 0
             
     def get_earnings_history(self, days=7):
