@@ -509,17 +509,48 @@ class QuilNodeMonitor:
             start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
             end_time = datetime.strptime(f"{date} 23:59:59", '%Y-%m-%d %H:%M:%S')
             
-            # Get coins for this date from cache
-            coins = self.get_coin_data(start_time, end_time)
-            if not coins:
+            # Get coins for this date
+            result = subprocess.run(
+                [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
+                capture_output=True, text=True,
+                encoding='utf-8'
+            )
+
+            if result.returncode != 0:
+                # If we have historical data for this date, use it
+                if date in self.history.get('daily_earnings', {}):
+                    return self.history['daily_earnings'][date]
                 return 0
-            
-            # Sum up all coin amounts for the day
-            daily_earnings = sum(coin['amount'] for coin in coins)
+
+            daily_earnings = 0
+            for line in result.stdout.splitlines():
+                try:
+                    # Only process lines containing timestamps for our date
+                    if date not in line:
+                        continue
+                        
+                    amount_match = re.search(r'([\d.]+)\s*QUIL', line)
+                    if amount_match:
+                        amount = float(amount_match.group(1))
+                        # Only count positive amounts (incoming coins)
+                        if amount > 0:
+                            daily_earnings += amount
+                except Exception:
+                    continue
+
+            # Store the earnings in history
+            if 'daily_earnings' not in self.history:
+                self.history['daily_earnings'] = {}
+            self.history['daily_earnings'][date] = daily_earnings
+            self._save_history()
+
             return daily_earnings
             
         except Exception as e:
             print(f"Error calculating earnings for {date}: {e}")
+            # If we have historical data for this date, use it
+            if date in self.history.get('daily_earnings', {}):
+                return self.history['daily_earnings'][date]
             return 0
             
     def get_earnings_history(self, days=7):
