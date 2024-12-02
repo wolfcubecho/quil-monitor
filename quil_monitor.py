@@ -559,27 +559,23 @@ class QuilNodeMonitor:
 
     def get_daily_earnings(self, date):
         try:
-            # Get the landing rates and frames for this date
-            landing_data = self.history['landing_rates'].get(date, {})
-            transactions = landing_data.get('transactions', 0)
+            # First check if we have coin data in history
+            if 'coin_data' in self.history and date in self.history['coin_data']:
+                # Sum up all coin amounts for the date directly from history
+                daily_earnings = sum(coin['amount'] for coin in self.history['coin_data'][date])
+                return daily_earnings
             
-            if transactions == 0:
+            # If no coin data in history for this date
+            start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
+            end_time = datetime.strptime(f"{date} 23:59:59", '%Y-%m-%d %H:%M:%S')
+            
+            # Get fresh coin data
+            coins = self.get_coin_data(start_time, end_time)
+            if not coins:
                 return 0
-                
-            # If we have transactions in landing_rates, get the node balances
-            if date in self.history['daily_balance']:
-                current_balance = self.history['daily_balance'][date]
-                
-                # Try to get previous day's balance
-                prev_date = (datetime.strptime(date, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d')
-                prev_balance = self.history['daily_balance'].get(prev_date, current_balance)
-                
-                # If balance increased, that's earnings
-                if current_balance > prev_balance:
-                    earnings = current_balance - prev_balance
-                    return earnings
             
-            return 0
+            daily_earnings = sum(coin['amount'] for coin in coins)
+            return daily_earnings
             
         except Exception as e:
             print(f"Error calculating earnings for {date}: {e}")
