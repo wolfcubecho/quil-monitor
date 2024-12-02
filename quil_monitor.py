@@ -195,10 +195,27 @@ class QuilNodeMonitor:
         }
         self.coin_cache = None
         self.load_history()
+        self.fix_history_timestamps()
         self.node_binary = self._get_latest_node_binary()
         self.qclient_binary = self._get_latest_qclient_binary()
         self.telegram = TelegramNotifier(TELEGRAM_CONFIG)
         self.last_report_check = datetime.now().replace(hour=0, minute=0, second=0)
+
+    def fix_history_timestamps(self):
+        try:
+            if 'coin_data' in self.history:
+                for date in self.history['coin_data']:
+                    for coin in self.history['coin_data'][date]:
+                        if 'timestamp' in coin and isinstance(coin['timestamp'], datetime):
+                            coin['timestamp'] = coin['timestamp'].strftime('%Y-%m-%dT%H:%M:%SZ')
+            
+            if 'last_coin_update' in self.history and isinstance(self.history['last_coin_update'], datetime):
+                self.history['last_coin_update'] = self.history['last_coin_update'].strftime('%Y-%m-%dT%H:%M:%SZ')
+            
+            self._save_history()
+            print("History timestamps fixed successfully")
+        except Exception as e:
+            print(f"Error fixing history timestamps: {e}")
 
     def _get_latest_node_binary(self):
         try:
