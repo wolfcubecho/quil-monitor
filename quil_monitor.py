@@ -573,10 +573,16 @@ class QuilNodeMonitor:
 
     def get_daily_earnings(self, date):
         try:
+            TRANSFER_THRESHOLD = 30  # Filter out transactions larger than 30 QUIL
+            
             # First check if we have coin data in history
             if 'coin_data' in self.history and date in self.history['coin_data']:
-                # Sum up all coin amounts for the date directly from history
-                daily_earnings = sum(coin['amount'] for coin in self.history['coin_data'][date])
+                # Sum up all coin amounts for the date, excluding likely transfers
+                daily_earnings = sum(
+                    coin['amount'] 
+                    for coin in self.history['coin_data'][date] 
+                    if coin['amount'] <= TRANSFER_THRESHOLD
+                )
                 return daily_earnings
             
             # If no coin data in history for this date
@@ -588,7 +594,12 @@ class QuilNodeMonitor:
             if not coins:
                 return 0
             
-            daily_earnings = sum(coin['amount'] for coin in coins)
+            # Sum up coins, excluding likely transfers
+            daily_earnings = sum(
+                coin['amount'] 
+                for coin in coins 
+                if coin['amount'] <= TRANSFER_THRESHOLD
+            )
             return daily_earnings
             
         except Exception as e:
