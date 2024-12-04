@@ -429,7 +429,7 @@ class QuilNodeMonitor:
             return self.history['coin_data'][date]
         return []
         
-     def calculate_landing_rate(self, date=None):
+    def calculate_landing_rate(self, date=None):
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
             
