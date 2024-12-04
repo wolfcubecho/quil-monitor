@@ -559,7 +559,7 @@ class QuilNodeMonitor:
             }
 
     def get_daily_earnings(self, date):
-        """Calculate earnings for a specific date"""
+        """Calculate earnings for a specific date with debug output"""
         try:
             # Define max size for mining rewards
             TRANSFER_THRESHOLD = 30  # QUIL
@@ -568,15 +568,26 @@ class QuilNodeMonitor:
             start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
             end_time = datetime.strptime(f"{date} 23:59:59", '%Y-%m-%d %H:%M:%S')
             
-            # Always try to get fresh data first
+            print(f"\nDEBUG: Getting earnings for {date}")
+            print(f"DEBUG: Time range: {start_time} to {end_time}")
+            
+            # Always try to get fresh data
             coins = self.get_coin_data(start_time, end_time)
+            print(f"DEBUG: Found {len(coins)} coins")
             
             if not coins:
-                # Fall back to stored data only if fresh data fetch fails
+                print("DEBUG: No fresh coins found, checking stored data")
                 coins = self.get_coin_data_for_date(date)
+                print(f"DEBUG: Found {len(coins)} stored coins")
             
             if not coins:
+                print("DEBUG: No coins found at all")
                 return 0
+            
+            # Print each coin for debugging
+            for coin in coins:
+                print(f"DEBUG: Coin - Amount: {coin['amount']} QUIL, Frame: {coin['frame']}, "
+                      f"Time: {coin['timestamp']}")
             
             # Sum up all mining rewards (coins below threshold)
             daily_earnings = sum(
@@ -585,13 +596,7 @@ class QuilNodeMonitor:
                 if coin['amount'] <= TRANSFER_THRESHOLD
             )
             
-            # Store the updated earnings in history
-            if not hasattr(self, 'history'):
-                self.history = {}
-            if 'daily_earnings' not in self.history:
-                self.history['daily_earnings'] = {}
-            self.history['daily_earnings'][date] = daily_earnings
-            
+            print(f"DEBUG: Total earnings calculated: {daily_earnings} QUIL")
             return daily_earnings
             
         except Exception as e:
@@ -599,10 +604,14 @@ class QuilNodeMonitor:
             return 0
 
     def get_coin_data(self, start_time, end_time):
-        """Get fresh coin data from the node"""
+        """Get fresh coin data from the node with debug output"""
         try:
-            # Force refresh of coin cache for current day
+            print(f"\nDEBUG: Fetching fresh coin data")
+            print(f"DEBUG: Cache status: {'Present' if self.coin_cache else 'None'}")
+            
+            # Always clear cache for today's data
             if isinstance(start_time, datetime) and start_time.date() == datetime.now().date():
+                print("DEBUG: Clearing cache for today's data")
                 self.coin_cache = None
                 self.history['last_coin_update'] = None
             
@@ -613,6 +622,7 @@ class QuilNodeMonitor:
             )
             
             if result.returncode != 0:
+                print("DEBUG: Error running qclient command")
                 return []
 
             new_coins = []
@@ -633,9 +643,11 @@ class QuilNodeMonitor:
                                     'timestamp': timestamp
                                 }
                                 new_coins.append(coin)
-                except Exception:
+                except Exception as e:
+                    print(f"DEBUG: Error parsing line: {e}")
                     continue
 
+            print(f"DEBUG: Found {len(new_coins)} new coins in total")
             return new_coins
             
         except Exception as e:
