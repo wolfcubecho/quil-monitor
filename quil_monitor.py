@@ -203,6 +203,17 @@ class QuilNodeMonitor:
         self.telegram = TelegramNotifier(TELEGRAM_CONFIG)
         self.last_report_check = datetime.now().replace(hour=0, minute=0, second=0)
 
+    def get_earnings_history(self, days=7):
+        earnings_data = []
+        today = datetime.now().date()
+        
+        for i in range(days):
+            date = (today - timedelta(days=i)).strftime('%Y-%m-%d')
+            earnings = self.get_daily_earnings(date)
+            earnings_data.append((date, earnings))
+            
+        return earnings_data
+
     def fix_history_timestamps(self):
         try:
             if 'coin_data' in self.history:
