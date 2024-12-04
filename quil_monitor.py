@@ -663,11 +663,13 @@ class QuilNodeMonitor:
         today = current_time.strftime('%Y-%m-%d')
         today_earnings = self.get_daily_earnings(today)
         today_metrics = self.get_processing_metrics(today)
-        today_landing = self.calculate_landing_rate(today)
+        today_landing = self.calculate_landing_rate(today)  # Fresh calculation
         
         if node_info:
             earnings_data, daily_avg = self.get_daily_earnings_history(7)
-            landing_rates = self.get_landing_rate_history(7)
+            landing_rates = [self.calculate_landing_rate(date)['landing_rate'] 
+                           for date, _ in earnings_data 
+                           if self.calculate_landing_rate(date)['frames'] > 0]
             
             # Calculate averages based on daily average
             weekly_avg = daily_avg * 7
@@ -719,12 +721,14 @@ class QuilNodeMonitor:
 
         # Earnings History with Landing Rates
         print("\nHistory (Last 7 Days):")
-        for date, earnings in self.get_daily_earnings_history(7)[0]:
-            metrics = self.history['processing_metrics'].get(date, {})
-            landing_data = self.history['landing_rates'].get(date, {})
-            landing_rate = landing_data.get('landing_rate', 0)
-            transactions = landing_data.get('transactions', 0)
-            frames = landing_data.get('frames', 0)
+        for date, earnings in earnings_data:
+            # Get fresh calculations for each date
+            landing_data = self.calculate_landing_rate(date)
+            metrics = self.get_processing_metrics(date)
+            
+            landing_rate = landing_data['landing_rate']
+            transactions = landing_data['transactions']
+            frames = landing_data['frames']
             
             cpu_info = metrics.get('cpu', {})
             avg_cpu = cpu_info.get('avg_time', 0)
