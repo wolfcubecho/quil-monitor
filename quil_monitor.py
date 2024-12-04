@@ -603,11 +603,11 @@ class QuilNodeMonitor:
                 total_earnings += earnings
                 days_with_data += 1
             earnings_data.append((date, earnings))
-    
-    # Calculate daily average only from days with earnings
-    daily_avg = total_earnings / days_with_data if days_with_data > 0 else 0
-    
-    return earnings_data, daily_avg
+        
+        # Calculate daily average only from days with earnings
+        daily_avg = total_earnings / days_with_data if days_with_data > 0 else 0
+        
+        return earnings_data, daily_avg
 
     def check_daily_report_time(self):
         current_time = datetime.now()
