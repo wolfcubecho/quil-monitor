@@ -527,7 +527,7 @@ class QuilNodeMonitor:
             print(f"Error calculating landing rate for {date}: {e}")
             return {'landing_rate': 0, 'transactions': 0, 'frames': 0}
             
-   def get_processing_metrics(self, date=None):
+    def get_processing_metrics(self, date=None):
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
             
