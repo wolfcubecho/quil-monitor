@@ -306,33 +306,13 @@ class QuilNodeMonitor:
             except Exception as e:
                 print(f"Error loading history (will start fresh): {e}")
                 
-    def _save_history(self):
+   def _save_history(self):
+        start_time = datetime.now()
         try:
-            # Convert any datetime objects to strings before saving
-            history_copy = {}
-            for key, value in self.history.items():
-                if key == 'coin_data':
-                    history_copy[key] = {}
-                    for date, coins in value.items():
-                        history_copy[key][date] = [
-                            {
-                                'amount': coin['amount'],
-                                'frame': coin['frame'],
-                                'timestamp': coin['timestamp'].strftime('%Y-%m-%dT%H:%M:%SZ') 
-                                    if isinstance(coin['timestamp'], datetime) else coin['timestamp']
-                            }
-                            for coin in coins
-                        ]
-                elif key == 'last_coin_update':
-                    if isinstance(value, datetime):
-                        history_copy[key] = value.strftime('%Y-%m-%dT%H:%M:%SZ')
-                    else:
-                        history_copy[key] = value
-                else:
-                    history_copy[key] = value
-
             with open(self.log_file, 'w') as f:
-                json.dump(history_copy, f, indent=2)
+                json.dump(self.history, f, indent=2)
+            save_time = (datetime.now() - start_time).total_seconds()
+            print(f"History save took: {save_time:.2f}s")
         except Exception as e:
             print(f"Error saving history: {e}")
 
@@ -386,6 +366,7 @@ class QuilNodeMonitor:
             return None
 
     def get_coin_data(self, start_time, end_time):
+        query_start = datetime.now()
         try:
             result = subprocess.run(
                 [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
@@ -396,6 +377,7 @@ class QuilNodeMonitor:
             if result.returncode != 0:
                 return []
 
+            process_start = datetime.now()
             coins = []
             for line in result.stdout.splitlines():
                 try:
@@ -416,6 +398,13 @@ class QuilNodeMonitor:
                                 coins.append(coin)
                 except:
                     continue
+
+            total_time = (datetime.now() - query_start).total_seconds()
+            process_time = (datetime.now() - process_start).total_seconds()
+            print(f"\nCoin Data Performance:")
+            print(f"Query time: {(process_start - query_start).total_seconds():.2f}s")
+            print(f"Processing time: {process_time:.2f}s")
+            print(f"Total time: {total_time:.2f}s")
 
             return coins
             
@@ -472,17 +461,17 @@ class QuilNodeMonitor:
     def get_processing_metrics(self, date=None):
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
-            
-        # For historical dates, return cached data from history
-        if date != datetime.now().strftime('%Y-%m-%d'):
-            if date in self.history.get('processing_metrics', {}):
-                return self.history['processing_metrics'][date]
         
-        # For today, calculate fresh metrics
+        start_total = datetime.now()
         metrics = ProcessingMetrics()
+        
+        # Time the journalctl query
+        start_query = datetime.now()
         cmd = f'journalctl -u ceremonyclient.service --since "{date} 00:00:00" --until "{date} 23:59:59" --no-hostname -o cat | grep -E "creating data shard ring proof|submitting data proof"'
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        query_time = (datetime.now() - start_query).total_seconds()
         
+        start_process = datetime.now()
         creation_data = {}
         for line in result.stdout.splitlines():
             try:
@@ -502,13 +491,16 @@ class QuilNodeMonitor:
                     metrics.add_submission(frame_age)
             except:
                 continue
+        process_time = (datetime.now() - start_process).total_seconds()
         
         stats = metrics.get_stats()
+        total_time = (datetime.now() - start_total).total_seconds()
         
-        # Cache today's metrics
         if date == datetime.now().strftime('%Y-%m-%d'):
-            self.history['processing_metrics'][date] = stats
-            self._save_history()
+            print(f"\nPerformance Breakdown for {date}:")
+            print(f"Journalctl query: {query_time:.2f}s")
+            print(f"Data processing: {process_time:.2f}s")
+            print(f"Total method time: {total_time:.2f}s")
         
         return stats
 
