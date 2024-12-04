@@ -450,37 +450,37 @@ class QuilNodeMonitor:
             return {'landing_rate': 0, 'transactions': 0, 'frames': 0}
             
     def get_processing_metrics(self, date=None):
-    if date is None:
-        date = datetime.now().strftime('%Y-%m-%d')
-    
-    metrics = ProcessingMetrics()
-    
-    # One single journalctl command combining both patterns
-    cmd = f'journalctl -u ceremonyclient.service --since "{date} 00:00:00" --until "{date} 23:59:59" --no-hostname -o cat | grep -E "creating data shard ring proof|submitting data proof"'
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    
-    creation_data = {}
-    
-    for line in result.stdout.splitlines():
-        try:
-            if "creating data shard ring proof" in line:
-                data = json.loads(line)
-                frame_number = data.get('frame_number')
-                frame_age = float(data.get('frame_age', 0))
-                creation_data[frame_number] = {'age': frame_age}
-                metrics.add_creation(frame_age)
-            elif "submitting data proof" in line:
-                data = json.loads(line)
-                frame_number = data.get('frame_number')
-                frame_age = float(data.get('frame_age', 0))
-                if frame_number in creation_data:
-                    cpu_time = frame_age - creation_data[frame_number]['age']
-                    metrics.add_cpu_time(cpu_time)
-                metrics.add_submission(frame_age)
-        except:
-            continue
-    
-    return metrics.get_stats()
+        if date is None:
+            date = datetime.now().strftime('%Y-%m-%d')
+        
+        metrics = ProcessingMetrics()
+        
+        # One single journalctl command combining both patterns
+        cmd = f'journalctl -u ceremonyclient.service --since "{date} 00:00:00" --until "{date} 23:59:59" --no-hostname -o cat | grep -E "creating data shard ring proof|submitting data proof"'
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        
+        creation_data = {}
+        
+        for line in result.stdout.splitlines():
+            try:
+                if "creating data shard ring proof" in line:
+                    data = json.loads(line)
+                    frame_number = data.get('frame_number')
+                    frame_age = float(data.get('frame_age', 0))
+                    creation_data[frame_number] = {'age': frame_age}
+                    metrics.add_creation(frame_age)
+                elif "submitting data proof" in line:
+                    data = json.loads(line)
+                    frame_number = data.get('frame_number')
+                    frame_age = float(data.get('frame_age', 0))
+                    if frame_number in creation_data:
+                        cpu_time = frame_age - creation_data[frame_number]['age']
+                        metrics.add_cpu_time(cpu_time)
+                    metrics.add_submission(frame_age)
+            except:
+                continue
+        
+        return metrics.get_stats()
 
     def get_coin_data(self, start_time, end_time):
         try:
