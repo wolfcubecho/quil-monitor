@@ -695,43 +695,24 @@ class QuilNodeMonitor:
         today = current_time.strftime('%Y-%m-%d')
         today_earnings = self.get_daily_earnings(today)
         today_metrics = self.get_processing_metrics(today)
-        today_landing = self.calculate_landing_rate(today)  # Fresh calculation
+        today_landing = self.calculate_landing_rate(today)
         
         if node_info:
-            earnings_data, daily_avg = self.get_daily_earnings_history(7)
+            earnings_data = self.get_earnings_history(7)
+            daily_avg = sum(earning for _, earning in earnings_data) / 7
+            landing_rates = self.get_landing_rate_history(7)
             
-            # Calculate landing rates for different time periods
-            daily_rates = []
-            weekly_rates = []
-            monthly_rates = []
+            # Calculate averages based on daily average
+            weekly_avg = daily_avg * 7
+            monthly_avg = daily_avg * 30
             
-            # Get last 30 days of landing rates
-            for i in range(30):
-                date = (current_time.date() - timedelta(days=i)).strftime('%Y-%m-%d')
-                landing_data = self.calculate_landing_rate(date)
-                if landing_data['frames'] > 0:  # Only include days with actual frames
-                    rate = landing_data['landing_rate']
-                    if i == 0:  # Today
-                        daily_rates.append(rate)
-                    if i < 7:   # Last 7 days
-                        weekly_rates.append(rate)
-                    monthly_rates.append(rate)  # All 30 days
+            # Get landing rate average only from days with data
+            daily_landing_avg = sum(landing_rates) / len(landing_rates) if landing_rates else 0
             
-            # Calculate averages for each time period
-            daily_landing_avg = sum(daily_rates) / len(daily_rates) if daily_rates else 0
-            weekly_landing_avg = sum(weekly_rates) / len(weekly_rates) if weekly_rates else 0
-            monthly_landing_avg = sum(monthly_rates) / len(monthly_rates) if monthly_rates else 0
-            
-            # Get colors for each average
-            daily_color = (COLORS['green'] if daily_landing_avg >= THRESHOLDS['landing_rate']['good']
-                         else COLORS['yellow'] if daily_landing_avg >= THRESHOLDS['landing_rate']['warning']
-                         else COLORS['red'])
-            weekly_color = (COLORS['green'] if weekly_landing_avg >= THRESHOLDS['landing_rate']['good']
-                          else COLORS['yellow'] if weekly_landing_avg >= THRESHOLDS['landing_rate']['warning']
+            # Color code the landing rate
+            landing_color = (COLORS['green'] if daily_landing_avg >= THRESHOLDS['landing_rate']['good']
+                          else COLORS['yellow'] if daily_landing_avg >= THRESHOLDS['landing_rate']['warning']
                           else COLORS['red'])
-            monthly_color = (COLORS['green'] if monthly_landing_avg >= THRESHOLDS['landing_rate']['good']
-                           else COLORS['yellow'] if monthly_landing_avg >= THRESHOLDS['landing_rate']['warning']
-                           else COLORS['red'])
 
             print(f"\nNode Information:")
             print(f"Ring:            {node_info['ring']}")
@@ -740,17 +721,13 @@ class QuilNodeMonitor:
             print(f"QUIL Price:      ${quil_price:.4f}")
             print(f"QUIL on Node:    {node_info['total']:.6f}")
             
-            # Display averages with their respective landing rates
             print(f"\nDaily Average:   {daily_avg:.6f} QUIL // ${daily_avg * quil_price:.2f} // "
-                  f"{daily_color}{daily_landing_avg:.2f}%{COLORS['reset']}")
-            weekly_avg = daily_avg * 7
+                  f"{landing_color}{daily_landing_avg:.2f}%{COLORS['reset']}")
             print(f"Weekly Average:  {weekly_avg:.6f} QUIL // ${weekly_avg * quil_price:.2f} // "
-                  f"{weekly_color}{weekly_landing_avg:.2f}%{COLORS['reset']}")
-            monthly_avg = daily_avg * 30
+                  f"{landing_color}{daily_landing_avg:.2f}%{COLORS['reset']}")
             print(f"Monthly Average: {monthly_avg:.6f} QUIL // ${monthly_avg * quil_price:.2f} // "
-                  f"{monthly_color}{monthly_landing_avg:.2f}%{COLORS['reset']}")
+                  f"{landing_color}{daily_landing_avg:.2f}%{COLORS['reset']}")
 
-        # Today's Stats and Processing Analysis
         print(f"\nToday's Stats ({today}):")
         print(f"Earnings:        {today_earnings:.6f} QUIL // ${today_earnings * quil_price:.2f}")
         
@@ -772,27 +749,20 @@ class QuilNodeMonitor:
                                      today_metrics['cpu'], 
                                      THRESHOLDS['cpu'])
 
-        # Earnings History with Landing Rates
         print("\nHistory (Last 7 Days):")
         for date, earnings in earnings_data:
-            # Get fresh calculations for each date
-            landing_data = self.calculate_landing_rate(date)
             metrics = self.get_processing_metrics(date)
-            
-            landing_rate = landing_data['landing_rate']
-            transactions = landing_data['transactions']
-            frames = landing_data['frames']
-            
+            landing_data = self.calculate_landing_rate(date)
             cpu_info = metrics.get('cpu', {})
             avg_cpu = cpu_info.get('avg_time', 0)
             
-            landing_color = (COLORS['green'] if landing_rate >= THRESHOLDS['landing_rate']['good']
-                           else COLORS['yellow'] if landing_rate >= THRESHOLDS['landing_rate']['warning']
+            landing_color = (COLORS['green'] if landing_data['landing_rate'] >= THRESHOLDS['landing_rate']['good']
+                           else COLORS['yellow'] if landing_data['landing_rate'] >= THRESHOLDS['landing_rate']['warning']
                            else COLORS['red'])
             
             print(f"{date}: {earnings:.6f} QUIL // ${earnings * quil_price:.2f} "
-                  f"(Landing Rate: {landing_color}{landing_rate:.2f}%{COLORS['reset']}, "
-                  f"{transactions}/{frames} frames, "
+                  f"(Landing Rate: {landing_color}{landing_data['landing_rate']:.2f}%{COLORS['reset']}, "
+                  f"{landing_data['transactions']}/{landing_data['frames']} frames, "
                   f"Avg Process: {avg_cpu:.2f}s)")
 
         # Check for daily report
