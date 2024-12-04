@@ -504,112 +504,90 @@ class QuilNodeMonitor:
             print(f"Error calculating landing rate: {e}")
             return {'landing_rate': 0, 'transactions': 0, 'frames': 0}
             
-    def get_processing_metrics(self, date=None):
+   def get_processing_metrics(self, date=None):
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
-        
+            
         try:
-            # Check if we have stored metrics for this date
-            if date in self.history.get('processing_metrics', {}):
-                stored_metrics = self.history['processing_metrics'][date]
-                
-                # If it's not today, return stored metrics
-                if date != datetime.now().strftime('%Y-%m-%d'):
-                    return stored_metrics
-                
-                # For today, get the last processed timestamp
-                last_processed = self.history.get('last_processed_timestamp', 0)
-                
-                # Only get new metrics since last processed
-                metrics = ProcessingMetrics()
-                
-                # Initialize with stored data
-                for t in stored_metrics['creation'].get('times', []):
-                    metrics.add_creation(t)
-                for t in stored_metrics['submission'].get('times', []):
-                    metrics.add_submission(t)
-                for t in stored_metrics['cpu'].get('times', []):
-                    metrics.add_cpu_time(t)
-                
-                # Get only new data since last processed
-                start_time = datetime.fromtimestamp(last_processed).strftime('%Y-%m-%d %H:%M:%S')
-                end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                
-                # Get creation times for new data
-                cmd = f'journalctl -u ceremonyclient.service --since "{start_time}" --until "{end_time}" --no-hostname -o cat | grep -i "creating data shard ring proof"'
-                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-                
-                creation_data = {}
-                for line in result.stdout.splitlines():
-                    try:
-                        data = json.loads(line)
-                        frame_number = data.get('frame_number')
-                        frame_age = float(data.get('frame_age', 0))
-                        if frame_age > 0:
-                            creation_data[frame_number] = {'age': frame_age, 'timestamp': float(data.get('ts', 0))}
-                            metrics.add_creation(frame_age)
-                    except:
-                        continue
-    
-                # Get submission times for new data
-                cmd = f'journalctl -u ceremonyclient.service --since "{start_time}" --until "{end_time}" --no-hostname -o cat | grep -i "submitting data proof"'
-                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-                
-                for line in result.stdout.splitlines():
-                    try:
-                        data = json.loads(line)
-                        frame_number = data.get('frame_number')
-                        frame_age = float(data.get('frame_age', 0))
+            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            today_start = f"{date} 00:00:00"  # Explicit start of the day
+            
+            # For historical dates, use stored metrics
+            if date != datetime.now().strftime('%Y-%m-%d'):
+                return self.history.get('processing_metrics', {}).get(date, {
+                    'creation': {'total': 0, 'avg_time': 0},
+                    'submission': {'total': 0, 'avg_time': 0},
+                    'cpu': {'total': 0, 'avg_time': 0}
+                })
+            
+            metrics = ProcessingMetrics()
+            
+            # Very explicit date filtering in journalctl command
+            cmd = f'journalctl -u ceremonyclient.service --since "{today_start}" --until "{current_time}" --no-hostname -o cat | grep -i "creating data shard ring proof"'
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            
+            # Counter for sanity check
+            frame_count = 0
+            
+            creation_data = {}
+            for line in result.stdout.splitlines():
+                try:
+                    data = json.loads(line)
+                    frame_number = data.get('frame_number')
+                    frame_age = float(data.get('frame_age', 0))
+                    ts = float(data.get('ts', 0))
+                    
+                    # Convert timestamp to datetime for date checking
+                    ts_date = datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
+                    
+                    # Only process if it's from the requested date
+                    if ts_date == date and frame_age > 0:
+                        creation_data[frame_number] = {'age': frame_age, 'timestamp': ts}
+                        metrics.add_creation(frame_age)
+                        frame_count += 1
                         
-                        if frame_age > 0:
-                            if frame_number in creation_data:
-                                creation_age = creation_data[frame_number]['age']
-                                cpu_time = frame_age - creation_age
-                                if cpu_time > 0:
-                                    metrics.add_cpu_time(cpu_time)
-                            metrics.add_submission(frame_age)
-                    except:
-                        continue
-    
-                # Calculate final stats
-                stats = metrics.get_stats()
-                
-                # Store the raw times for future updates
-                stats['creation']['times'] = metrics.creation_times
-                stats['submission']['times'] = metrics.submission_times
-                stats['cpu']['times'] = metrics.cpu_times
-                
-                # Update history
-                self.history['processing_metrics'][date] = stats
-                self.history['last_processed_timestamp'] = datetime.now().timestamp()
-                self._save_history()
-                
-                return stats
-                
-            else:
-                # If no stored metrics, process full day
-                metrics = ProcessingMetrics()
-                start_time = f"{date} 00:00:00"
-                end_time = f"{date} 23:59:59"
-                
-                # Rest of your existing processing code...
-                # (Keep your existing code for processing a full day's metrics)
-                
-                stats = metrics.get_stats()
-                
-                # Store the raw times for future updates
-                stats['creation']['times'] = metrics.creation_times
-                stats['submission']['times'] = metrics.submission_times
-                stats['cpu']['times'] = metrics.cpu_times
-                
-                # Update history
-                self.history['processing_metrics'][date] = stats
-                if date == datetime.now().strftime('%Y-%m-%d'):
-                    self.history['last_processed_timestamp'] = datetime.now().timestamp()
-                self._save_history()
-                
-                return stats
-                
+                        # Sanity check - if we're over 500 frames something's wrong
+                        if frame_count > 500:
+                            print(f"Warning: Excessive frame count detected ({frame_count})")
+                            break
+                            
+                except Exception as e:
+                    continue
+
+            # Similar date filtering for submissions
+            cmd = f'journalctl -u ceremonyclient.service --since "{today_start}" --until "{current_time}" --no-hostname -o cat | grep -i "submitting data proof"'
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            
+            for line in result.stdout.splitlines():
+                try:
+                    data = json.loads(line)
+                    frame_number = data.get('frame_number')
+                    frame_age = float(data.get('frame_age', 0))
+                    ts = float(data.get('ts', 0))
+                    
+                    # Convert timestamp to datetime for date checking
+                    ts_date = datetime.fromtimestamp(ts).strftime('%Y-%m-%d')
+                    
+                    # Only process if it's from the requested date
+                    if ts_date == date and frame_age > 0:
+                        if frame_number in creation_data:
+                            creation_age = creation_data[frame_number]['age']
+                            cpu_time = frame_age - creation_age
+                            if cpu_time > 0:
+                                metrics.add_cpu_time(cpu_time)
+                        metrics.add_submission(frame_age)
+                except:
+                    continue
+
+            stats = metrics.get_stats()
+            
+            # Store in history
+            self.history['processing_metrics'][date] = stats
+            self.history['last_processed_timestamp'] = datetime.now().timestamp()
+            self._save_history()
+            
+            return stats
+            
         except Exception as e:
             print(f"Error getting processing metrics for {date}: {e}")
             return {
