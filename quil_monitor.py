@@ -568,10 +568,12 @@ class QuilNodeMonitor:
             start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
             end_time = datetime.strptime(f"{date} 23:59:59", '%Y-%m-%d %H:%M:%S')
             
-            coins = self.get_coin_data_for_date(date)
+            # Always try to get fresh data first
+            coins = self.get_coin_data(start_time, end_time)
+            
             if not coins:
-                # Try getting fresh data
-                coins = self.get_coin_data(start_time, end_time)
+                # Fall back to stored data only if fresh data fetch fails
+                coins = self.get_coin_data_for_date(date)
             
             if not coins:
                 return 0
@@ -583,11 +585,62 @@ class QuilNodeMonitor:
                 if coin['amount'] <= TRANSFER_THRESHOLD
             )
             
+            # Store the updated earnings in history
+            if not hasattr(self, 'history'):
+                self.history = {}
+            if 'daily_earnings' not in self.history:
+                self.history['daily_earnings'] = {}
+            self.history['daily_earnings'][date] = daily_earnings
+            
             return daily_earnings
             
         except Exception as e:
             print(f"Error calculating earnings for {date}: {e}")
             return 0
+
+    def get_coin_data(self, start_time, end_time):
+        """Get fresh coin data from the node"""
+        try:
+            # Force refresh of coin cache for current day
+            if isinstance(start_time, datetime) and start_time.date() == datetime.now().date():
+                self.coin_cache = None
+                self.history['last_coin_update'] = None
+            
+            result = subprocess.run(
+                [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
+                capture_output=True, text=True,
+                encoding='utf-8'
+            )
+            
+            if result.returncode != 0:
+                return []
+
+            new_coins = []
+            for line in result.stdout.splitlines():
+                try:
+                    amount_match = re.search(r'([\d.]+)\s*QUIL', line)
+                    frame_match = re.search(r'Frame\s*(\d+)', line)
+                    timestamp_match = re.search(r'Timestamp\s*([\d-]+T[\d:]+Z)', line)
+                    
+                    if amount_match and frame_match and timestamp_match:
+                        timestamp_str = timestamp_match.group(1)
+                        if timestamp_str:
+                            timestamp = datetime.strptime(timestamp_str, '%Y-%m-%dT%H:%M:%SZ')
+                            if start_time <= timestamp <= end_time:
+                                coin = {
+                                    'amount': float(amount_match.group(1)),
+                                    'frame': int(frame_match.group(1)),
+                                    'timestamp': timestamp
+                                }
+                                new_coins.append(coin)
+                except Exception:
+                    continue
+
+            return new_coins
+            
+        except Exception as e:
+            print(f"Error getting fresh coin data: {e}")
+            return []
     
     def get_daily_earnings_history(self, days=7):
         """Get historical earnings data and calculate average"""
