@@ -588,7 +588,7 @@ class QuilNodeMonitor:
         except Exception as e:
             print(f"Error calculating earnings for {date}: {e}")
             return 0
-            
+    
     def get_daily_earnings_history(self, days=7):
         """Get historical earnings data and calculate average"""
         earnings_data = []
@@ -608,7 +608,7 @@ class QuilNodeMonitor:
         daily_avg = total_earnings / days_with_data if days_with_data > 0 else 0
         
         return earnings_data, daily_avg
-
+    
     def check_daily_report_time(self):
         current_time = datetime.now()
         last_run_file = "last_report.txt"
