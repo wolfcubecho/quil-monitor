@@ -558,24 +558,35 @@ class QuilNodeMonitor:
                 'cpu': {'total': 0, 'avg_time': 0}
             }
 
-    def get_daily_earnings_history(self, days=7):
-        earnings_data = []
-        total_earnings = 0
-        count_days = 0
-        today = datetime.now().date()
-        
-        for i in range(days):
-            date = (today - timedelta(days=i)).strftime('%Y-%m-%d')
-            earnings = self.get_daily_earnings(date)
-            if earnings > 0:  # Only count days with earnings
-                total_earnings += earnings
-                count_days += 1
-            earnings_data.append((date, earnings))
+    def get_daily_earnings(self, date):
+        try:
+            # Define max size for mining rewards
+            TRANSFER_THRESHOLD = 30  # QUIL
             
-        # Calculate true average based only on days with earnings
-        daily_avg = total_earnings / count_days if count_days > 0 else 0
-        
-        return earnings_data, daily_avg
+            # Get coin data for the date
+            start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
+            end_time = datetime.strptime(f"{date} 23:59:59", '%Y-%m-%d %H:%M:%S')
+            
+            coins = self.get_coin_data_for_date(date)
+            if not coins:
+                # Try getting fresh data
+                coins = self.get_coin_data(start_time, end_time)
+            
+            if not coins:
+                return 0
+            
+            # Sum up all mining rewards (coins below threshold)
+            daily_earnings = sum(
+                coin['amount'] 
+                for coin in coins 
+                if coin['amount'] <= TRANSFER_THRESHOLD
+            )
+            
+            return daily_earnings
+            
+        except Exception as e:
+            print(f"Error calculating earnings for {date}: {e}")
+            return 0
             
     def get_earnings_history(self, days=7):
         earnings_data = []
