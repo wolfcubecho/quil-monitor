@@ -422,12 +422,6 @@ class QuilNodeMonitor:
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
             
-        today = datetime.now().strftime('%Y-%m-%d')
-        
-        # For historical dates, use cached data
-        if date != today and date in self.history.get('landing_rates', {}):
-            return self.history['landing_rates'][date]
-        
         try:
             metrics = self.get_processing_metrics(date)
             total_frames = metrics['creation']['total'] if metrics else 0
@@ -439,21 +433,14 @@ class QuilNodeMonitor:
             end_time = datetime.strptime(f"{date} 23:59:59", '%Y-%m-%d %H:%M:%S')
             coins = self.get_coin_data(start_time, end_time)
             
-            transactions = sum(1 for coin in coins if float(coin['amount']) <= 30)
+            transactions = sum(1 for coin in coins if coin['amount'] <= 30)
             landing_rate = min((transactions / total_frames * 100), 100)
             
-            result = {
+            return {
                 'landing_rate': landing_rate,
                 'transactions': transactions,
                 'frames': total_frames
             }
-            
-            # Only cache if it's today
-            if date == today:
-                self.history['landing_rates'][date] = result
-                self._save_history()
-            
-            return result
             
         except Exception as e:
             print(f"Error calculating landing rate: {e}")
@@ -463,26 +450,22 @@ class QuilNodeMonitor:
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
         
-        today = datetime.now().strftime('%Y-%m-%d')
         metrics = ProcessingMetrics()
         
-        if date != today:
-            if date in self.history.get('processing_metrics', {}):
-                return self.history['processing_metrics'][date]
-        
+        # Single journalctl command
         cmd = f'journalctl -u ceremonyclient.service --since "{date} 00:00:00" --until "{date} 23:59:59" --no-hostname -o cat | grep -E "creating data shard ring proof|submitting data proof"'
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         
         creation_data = {}
+        
         for line in result.stdout.splitlines():
             try:
                 if "creating data shard ring proof" in line:
                     data = json.loads(line)
                     frame_number = data.get('frame_number')
                     frame_age = float(data.get('frame_age', 0))
-                    if frame_age > 0:
-                        creation_data[frame_number] = {'age': frame_age}
-                        metrics.add_creation(frame_age)
+                    creation_data[frame_number] = {'age': frame_age}
+                    metrics.add_creation(frame_age)
                 elif "submitting data proof" in line:
                     data = json.loads(line)
                     frame_number = data.get('frame_number')
@@ -494,20 +477,9 @@ class QuilNodeMonitor:
             except:
                 continue
         
-        stats = metrics.get_stats()
-        if date == today:
-            self.history['processing_metrics'][date] = stats
-        
-        return stats
+        return metrics.get_stats()
 
     def get_coin_data(self, start_time, end_time):
-        date = start_time.strftime('%Y-%m-%d')
-        today = datetime.now().strftime('%Y-%m-%d')
-        
-        if date != today and date in self.history.get('coin_data', {}):
-            return [coin for coin in self.history['coin_data'][date] 
-                   if start_time <= datetime.strptime(coin['timestamp'], '%Y-%m-%dT%H:%M:%SZ') <= end_time]
-        
         result = subprocess.run(
             [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
             capture_output=True, text=True,
@@ -532,15 +504,12 @@ class QuilNodeMonitor:
                             coin = {
                                 'amount': float(amount_match.group(1)),
                                 'frame': int(frame_match.group(1)),
-                                'timestamp': timestamp.strftime('%Y-%m-%dT%H:%M:%SZ')
+                                'timestamp': timestamp
                             }
                             coins.append(coin)
             except:
                 continue
 
-        if date == today:
-            self.history['coin_data'][date] = coins
-        
         return coins
             
     def get_daily_earnings(self, date):
