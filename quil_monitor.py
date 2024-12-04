@@ -463,13 +463,13 @@ class QuilNodeMonitor:
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
         
-        # For historical dates, use cached data
         today = datetime.now().strftime('%Y-%m-%d')
-        if date != today and date in self.history.get('processing_metrics', {}):
-            return self.history['processing_metrics'][date]
-        
-        # For today or missing historical data, calculate
         metrics = ProcessingMetrics()
+        
+        if date != today:
+            if date in self.history.get('processing_metrics', {}):
+                return self.history['processing_metrics'][date]
+        
         cmd = f'journalctl -u ceremonyclient.service --since "{date} 00:00:00" --until "{date} 23:59:59" --no-hostname -o cat | grep -E "creating data shard ring proof|submitting data proof"'
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         
@@ -495,11 +495,8 @@ class QuilNodeMonitor:
                 continue
         
         stats = metrics.get_stats()
-        
-        # Only cache if it's today's data
         if date == today:
             self.history['processing_metrics'][date] = stats
-            self._save_history()
         
         return stats
 
@@ -507,12 +504,10 @@ class QuilNodeMonitor:
         date = start_time.strftime('%Y-%m-%d')
         today = datetime.now().strftime('%Y-%m-%d')
         
-        # For historical dates, use cached data
         if date != today and date in self.history.get('coin_data', {}):
             return [coin for coin in self.history['coin_data'][date] 
                    if start_time <= datetime.strptime(coin['timestamp'], '%Y-%m-%dT%H:%M:%SZ') <= end_time]
         
-        # For today or missing data, get fresh data
         result = subprocess.run(
             [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
             capture_output=True, text=True,
@@ -542,11 +537,9 @@ class QuilNodeMonitor:
                             coins.append(coin)
             except:
                 continue
-        
-        # Only cache if it's today
+
         if date == today:
             self.history['coin_data'][date] = coins
-            self._save_history()
         
         return coins
             
@@ -692,13 +685,13 @@ class QuilNodeMonitor:
     def display_stats(self):
         print("\n=== QUIL Node Statistics ===")
         current_time = datetime.now()
+        today = current_time.strftime('%Y-%m-%d')
         print(f"Time: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
         
         node_info = self.get_node_info()
         quil_price = self.get_quil_price()
         
-        # Calculate earnings data and averages
-        today = current_time.strftime('%Y-%m-%d')
+        # Calculate today's data
         today_earnings = self.get_daily_earnings(today)
         today_metrics = self.get_processing_metrics(today)
         today_landing = self.calculate_landing_rate(today)
@@ -707,36 +700,25 @@ class QuilNodeMonitor:
             earnings_data = self.get_earnings_history(7)
             daily_avg = sum(earning for _, earning in earnings_data) / 7
             
-            # Pre-calculate all landing rates and metrics to avoid repeated calculations
-            historical_data = {}
-            for date, _ in earnings_data:
-                if date == today:
-                    metrics = today_metrics
-                    landing_data = today_landing
-                else:
-                    metrics = self.history.get('processing_metrics', {}).get(date, self.get_processing_metrics(date))
-                    landing_data = self.history.get('landing_rates', {}).get(date, self.calculate_landing_rate(date))
-                historical_data[date] = {'metrics': metrics, 'landing': landing_data}
-
-            # Calculate different period landing rates
-            today_rate = today_landing['landing_rate']
-            
-            week_rates = [historical_data[date]['landing']['landing_rate'] 
-                         for date, _ in earnings_data if historical_data[date]['landing']['frames'] > 0]
-            week_avg = sum(week_rates) / len(week_rates) if week_rates else 0
-            
-            # Get last 30 days for monthly average
-            month_dates = [(current_time.date() - timedelta(days=i)).strftime('%Y-%m-%d') for i in range(30)]
+            week_rates = []
             month_rates = []
-            for date in month_dates:
-                if date in historical_data:
-                    if historical_data[date]['landing']['frames'] > 0:
-                        month_rates.append(historical_data[date]['landing']['landing_rate'])
-            month_avg = sum(month_rates) / len(month_rates) if month_rates else 0
+            today_date = datetime.now().date()
             
-            # Color coding for each period
-            daily_color = (COLORS['green'] if today_rate >= THRESHOLDS['landing_rate']['good']
-                         else COLORS['yellow'] if today_rate >= THRESHOLDS['landing_rate']['warning']
+            # Get all rates in one pass
+            for i in range(30):
+                date = (today_date - timedelta(days=i)).strftime('%Y-%m-%d')
+                data = self.calculate_landing_rate(date)
+                if data['frames'] > 0:
+                    if i < 7:
+                        week_rates.append(data['landing_rate'])
+                    month_rates.append(data['landing_rate'])
+            
+            week_avg = sum(week_rates) / len(week_rates) if week_rates else 0
+            month_avg = sum(month_rates) / len(month_rates) if month_rates else 0
+
+            # Color coding for different time periods
+            daily_color = (COLORS['green'] if today_landing['landing_rate'] >= THRESHOLDS['landing_rate']['good']
+                         else COLORS['yellow'] if today_landing['landing_rate'] >= THRESHOLDS['landing_rate']['warning']
                          else COLORS['red'])
             
             weekly_color = (COLORS['green'] if week_avg >= THRESHOLDS['landing_rate']['good']
@@ -755,7 +737,7 @@ class QuilNodeMonitor:
             print(f"QUIL on Node:    {node_info['total']:.6f}")
             
             print(f"\nDaily Average:   {daily_avg:.6f} QUIL // ${daily_avg * quil_price:.2f} // "
-                  f"{daily_color}{today_rate:.2f}%{COLORS['reset']}")
+                  f"{daily_color}{today_landing['landing_rate']:.2f}%{COLORS['reset']}")
             print(f"Weekly Average:  {daily_avg * 7:.6f} QUIL // ${daily_avg * 7 * quil_price:.2f} // "
                   f"{weekly_color}{week_avg:.2f}%{COLORS['reset']}")
             print(f"Monthly Average: {daily_avg * 30:.6f} QUIL // ${daily_avg * 30 * quil_price:.2f} // "
@@ -797,6 +779,9 @@ class QuilNodeMonitor:
                   f"(Landing Rate: {landing_color}{landing_data['landing_rate']:.2f}%{COLORS['reset']}, "
                   f"{landing_data['transactions']}/{landing_data['frames']} frames, "
                   f"Avg Process: {avg_cpu:.2f}s)")
+
+        # Single history save at the end
+        self._save_history()
 
         # Check for daily report
         if self.check_daily_report_time():
