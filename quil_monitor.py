@@ -376,97 +376,40 @@ class QuilNodeMonitor:
 
     def get_coin_data(self, start_time, end_time):
         try:
-            current_time = datetime.now()
+            result = subprocess.run(
+                [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
+                capture_output=True, text=True,
+                encoding='utf-8'
+            )
             
-            # Convert stored coin data from history if needed
-            if self.coin_cache is None and 'coin_data' in self.history:
-                self.coin_cache = []
-                for date, coins in self.history['coin_data'].items():
-                    for coin in coins:
-                        if coin.get('timestamp'):
-                            try:
-                                # Convert string timestamp to datetime for cache
-                                if isinstance(coin['timestamp'], str):
-                                    coin['timestamp'] = datetime.strptime(coin['timestamp'], '%Y-%m-%dT%H:%M:%SZ')
-                                self.coin_cache.append(coin)
-                            except (ValueError, TypeError):
-                                continue
+            if result.returncode != 0:
+                return []
 
-            # Check if we need to update cache
-            last_update = None
-            if self.history.get('last_coin_update'):
+            coins = []
+            for line in result.stdout.splitlines():
                 try:
-                    if isinstance(self.history['last_coin_update'], str):
-                        last_update = datetime.strptime(self.history['last_coin_update'], '%Y-%m-%dT%H:%M:%SZ')
-                    else:
-                        last_update = self.history['last_coin_update']
-                except (ValueError, TypeError):
-                    last_update = None
-
-            if (self.coin_cache is None or last_update is None or 
-                (current_time - last_update).total_seconds() > 1800):
-                
-                result = subprocess.run(
-                    [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
-                    capture_output=True, text=True,
-                    encoding='utf-8'
-                )
-                
-                if result.returncode != 0:
-                    if self.coin_cache:
-                        return [coin for coin in self.coin_cache 
-                               if start_time <= coin['timestamp'] <= end_time]
-                    return []
-
-                new_coins = []
-                for line in result.stdout.splitlines():
-                    try:
-                        amount_match = re.search(r'([\d.]+)\s*QUIL', line)
-                        frame_match = re.search(r'Frame\s*(\d+)', line)
-                        timestamp_match = re.search(r'Timestamp\s*([\d-]+T[\d:]+Z)', line)
-                        
-                        if amount_match and frame_match and timestamp_match:
-                            timestamp_str = timestamp_match.group(1)
-                            if timestamp_str:
+                    amount_match = re.search(r'([\d.]+)\s*QUIL', line)
+                    frame_match = re.search(r'Frame\s*(\d+)', line)
+                    timestamp_match = re.search(r'Timestamp\s*([\d-]+T[\d:]+Z)', line)
+                    
+                    if amount_match and frame_match and timestamp_match:
+                        timestamp_str = timestamp_match.group(1)
+                        if timestamp_str:
+                            timestamp = datetime.strptime(timestamp_str, '%Y-%m-%dT%H:%M:%SZ')
+                            if start_time <= timestamp <= end_time:
                                 coin = {
                                     'amount': float(amount_match.group(1)),
                                     'frame': int(frame_match.group(1)),
-                                    'timestamp': datetime.strptime(timestamp_str, '%Y-%m-%dT%H:%M:%SZ')
+                                    'timestamp': timestamp
                                 }
-                                new_coins.append(coin)
-                    except Exception:
-                        continue
+                                coins.append(coin)
+                except:
+                    continue
 
-                if self.coin_cache is None:
-                    self.coin_cache = new_coins
-                else:
-                    existing_frames = {c['frame'] for c in self.coin_cache}
-                    self.coin_cache.extend([c for c in new_coins if c['frame'] not in existing_frames])
-
-                # Store with string timestamps
-                history_data = {}
-                for coin in self.coin_cache:
-                    date = coin['timestamp'].strftime('%Y-%m-%d')
-                    if date not in history_data:
-                        history_data[date] = []
-                    history_data[date].append({
-                        'amount': coin['amount'],
-                        'frame': coin['frame'],
-                        'timestamp': coin['timestamp'].strftime('%Y-%m-%dT%H:%M:%SZ')
-                    })
-
-                self.history['coin_data'] = history_data
-                self.history['last_coin_update'] = current_time.strftime('%Y-%m-%dT%H:%M:%SZ')
-                self._save_history()
-
-            return [coin for coin in self.coin_cache 
-                   if start_time <= coin['timestamp'] <= end_time]
+            return coins
             
         except Exception as e:
             print(f"Error getting coin data: {e}")
-            if self.coin_cache:
-                return [coin for coin in self.coin_cache 
-                       if start_time <= coin['timestamp'] <= end_time]
             return []
 
     def get_coin_data_for_date(self, date):
@@ -476,21 +419,10 @@ class QuilNodeMonitor:
         return []
         
     def calculate_landing_rate(self, date=None):
-        """Calculate landing rate for a specific date"""
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
             
         try:
-            # For historical dates, use stored data
-            if date != datetime.now().strftime('%Y-%m-%d'):
-                if date in self.history.get('landing_rates', {}):
-                    return self.history['landing_rates'][date]
-            
-            # For today, calculate fresh
-            start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
-            end_time = datetime.strptime(f"{date} 23:59:59", '%Y-%m-%d %H:%M:%S')
-            
-            # Get metrics first to get accurate frame count
             metrics = self.get_processing_metrics(date)
             total_frames = metrics['creation']['total'] if metrics else 0
             
@@ -498,14 +430,11 @@ class QuilNodeMonitor:
                 return {'landing_rate': 0, 'transactions': 0, 'frames': 0}
             
             # Get coin data
+            start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
+            end_time = datetime.strptime(f"{date} 23:59:59", '%Y-%m-%d %H:%M:%S')
             coins = self.get_coin_data(start_time, end_time)
-            if not coins:
-                coins = self.get_coin_data_for_date(date)
             
-            # Count successful transactions (coins <= 30 QUIL)
             transactions = sum(1 for coin in coins if coin['amount'] <= 30)
-            
-            # Calculate landing rate
             landing_rate = min((transactions / total_frames * 100), 100) if total_frames > 0 else 0
             
             result = {
@@ -514,86 +443,58 @@ class QuilNodeMonitor:
                 'frames': total_frames
             }
             
-            # Store in history
-            if not hasattr(self, 'history'):
-                self.history = {}
-            if 'landing_rates' not in self.history:
-                self.history['landing_rates'] = {}
-            self.history['landing_rates'][date] = result
-            
             return result
             
         except Exception as e:
-            print(f"Error calculating landing rate for {date}: {e}")
+            print(f"Error calculating landing rate: {e}")
             return {'landing_rate': 0, 'transactions': 0, 'frames': 0}
             
     def get_processing_metrics(self, date=None):
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
         
+        metrics = ProcessingMetrics()
+        start_time = f"{date} 00:00:00"
+        end_time = f"{date} 23:59:59"
+
         try:
-            current_time = datetime.now()
-            
-            # For historical dates, just return stored data
-            if date != current_time.strftime('%Y-%m-%d'):
-                return self.history.get('processing_metrics', {}).get(date, {
-                    'creation': {'total': 0, 'avg_time': 0},
-                    'submission': {'total': 0, 'avg_time': 0},
-                    'cpu': {'total': 0, 'avg_time': 0}
-                })
-
-            # Get last check time
-            last_check = self.history.get('last_check_time')
-            if last_check:
-                start_time = datetime.fromtimestamp(last_check).strftime('%Y-%m-%d %H:%M:%S')
-            else:
-                start_time = f"{date} 00:00:00"
-            
-            end_time = current_time.strftime('%Y-%m-%d %H:%M:%S')
-            
-            # Load existing metrics for today
-            metrics = ProcessingMetrics()
-            if date in self.history.get('processing_metrics', {}):
-                stored = self.history['processing_metrics'][date]
-                metrics.creation_times = stored.get('creation', {}).get('times', [])
-                metrics.submission_times = stored.get('submission', {}).get('times', [])
-                metrics.cpu_times = stored.get('cpu', {}).get('times', [])
-
-            # Only get new log entries since last check
-            cmd = f'journalctl -u ceremonyclient.service --since "{start_time}" --until "{end_time}" --no-hostname -o cat | grep -E "creating data shard ring proof|submitting data proof"'
+            # Get creation times first and store them
+            cmd = f'journalctl -u ceremonyclient.service --since "{start_time}" --until "{end_time}" --no-hostname -o cat | grep -i "creating data shard ring proof"'
             result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
             
             creation_data = {}
+            for line in result.stdout.splitlines():
+                try:
+                    data = json.loads(line)
+                    frame_number = data.get('frame_number')
+                    frame_age = float(data.get('frame_age', 0))
+                    if frame_age > 0:  # Only count valid frames
+                        creation_data[frame_number] = {'age': frame_age}
+                        metrics.add_creation(frame_age)
+                except:
+                    continue
+
+            # Get submission times and calculate CPU times
+            cmd = f'journalctl -u ceremonyclient.service --since "{start_time}" --until "{end_time}" --no-hostname -o cat | grep -i "submitting data proof"'
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
             
             for line in result.stdout.splitlines():
                 try:
-                    if "creating data shard ring proof" in line:
-                        data = json.loads(line)
-                        frame_number = data.get('frame_number')
-                        frame_age = float(data.get('frame_age', 0))
-                        if frame_age > 0:
-                            creation_data[frame_number] = {'age': frame_age}
-                            metrics.add_creation(frame_age)
-                    elif "submitting data proof" in line:
-                        data = json.loads(line)
-                        frame_number = data.get('frame_number')
-                        frame_age = float(data.get('frame_age', 0))
-                        if frame_age > 0:
-                            if frame_number in creation_data:
-                                cpu_time = frame_age - creation_data[frame_number]['age']
-                                if cpu_time > 0:
-                                    metrics.add_cpu_time(cpu_time)
-                            metrics.add_submission(frame_age)
+                    data = json.loads(line)
+                    frame_number = data.get('frame_number')
+                    frame_age = float(data.get('frame_age', 0))
+                    
+                    if frame_age > 0:
+                        if frame_number in creation_data:
+                            creation_age = creation_data[frame_number]['age']
+                            cpu_time = frame_age - creation_age
+                            if cpu_time > 0:
+                                metrics.add_cpu_time(cpu_time)
+                        metrics.add_submission(frame_age)
                 except:
                     continue
 
             stats = metrics.get_stats()
-            
-            # Store updated data
-            self.history['processing_metrics'][date] = stats
-            self.history['last_check_time'] = current_time.timestamp()
-            self._save_history()
-            
             return stats
             
         except Exception as e:
