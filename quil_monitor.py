@@ -618,7 +618,7 @@ class QuilNodeMonitor:
                 'submission': {'total': 0, 'avg_time': 0},
                 'cpu': {'total': 0, 'avg_time': 0}
             }
-
+            
     def get_daily_earnings(self, date):
         """Calculate earnings for a specific date"""
         try:
