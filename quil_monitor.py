@@ -559,6 +559,7 @@ class QuilNodeMonitor:
             }
 
     def get_daily_earnings(self, date):
+        """Calculate earnings for a specific date"""
         try:
             # Define max size for mining rewards
             TRANSFER_THRESHOLD = 30  # QUIL
@@ -588,16 +589,25 @@ class QuilNodeMonitor:
             print(f"Error calculating earnings for {date}: {e}")
             return 0
             
-    def get_earnings_history(self, days=7):
+    def get_daily_earnings_history(self, days=7):
+        """Get historical earnings data and calculate average"""
         earnings_data = []
-        today = datetime.now().date()
+        total_earnings = 0
+        days_with_data = 0
         
+        today = datetime.now().date()
         for i in range(days):
             date = (today - timedelta(days=i)).strftime('%Y-%m-%d')
             earnings = self.get_daily_earnings(date)
+            if earnings > 0:
+                total_earnings += earnings
+                days_with_data += 1
             earnings_data.append((date, earnings))
-            
-        return earnings_data
+    
+    # Calculate daily average only from days with earnings
+    daily_avg = total_earnings / days_with_data if days_with_data > 0 else 0
+    
+    return earnings_data, daily_avg
 
     def check_daily_report_time(self):
         current_time = datetime.now()
