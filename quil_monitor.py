@@ -450,60 +450,37 @@ class QuilNodeMonitor:
             return {'landing_rate': 0, 'transactions': 0, 'frames': 0}
             
     def get_processing_metrics(self, date=None):
-        if date is None:
-            date = datetime.now().strftime('%Y-%m-%d')
-        
-        metrics = ProcessingMetrics()
-        start_time = f"{date} 00:00:00"
-        end_time = f"{date} 23:59:59"
-
+    if date is None:
+        date = datetime.now().strftime('%Y-%m-%d')
+    
+    metrics = ProcessingMetrics()
+    
+    # One single journalctl command combining both patterns
+    cmd = f'journalctl -u ceremonyclient.service --since "{date} 00:00:00" --until "{date} 23:59:59" --no-hostname -o cat | grep -E "creating data shard ring proof|submitting data proof"'
+    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    
+    creation_data = {}
+    
+    for line in result.stdout.splitlines():
         try:
-            # Get creation times first and store them
-            cmd = f'journalctl -u ceremonyclient.service --since "{start_time}" --until "{end_time}" --no-hostname -o cat | grep -i "creating data shard ring proof"'
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-            
-            creation_data = {}
-            for line in result.stdout.splitlines():
-                try:
-                    data = json.loads(line)
-                    frame_number = data.get('frame_number')
-                    frame_age = float(data.get('frame_age', 0))
-                    if frame_age > 0:  # Only count valid frames
-                        creation_data[frame_number] = {'age': frame_age}
-                        metrics.add_creation(frame_age)
-                except:
-                    continue
-
-            # Get submission times and calculate CPU times
-            cmd = f'journalctl -u ceremonyclient.service --since "{start_time}" --until "{end_time}" --no-hostname -o cat | grep -i "submitting data proof"'
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-            
-            for line in result.stdout.splitlines():
-                try:
-                    data = json.loads(line)
-                    frame_number = data.get('frame_number')
-                    frame_age = float(data.get('frame_age', 0))
-                    
-                    if frame_age > 0:
-                        if frame_number in creation_data:
-                            creation_age = creation_data[frame_number]['age']
-                            cpu_time = frame_age - creation_age
-                            if cpu_time > 0:
-                                metrics.add_cpu_time(cpu_time)
-                        metrics.add_submission(frame_age)
-                except:
-                    continue
-
-            stats = metrics.get_stats()
-            return stats
-            
-        except Exception as e:
-            print(f"Error getting processing metrics for {date}: {e}")
-            return {
-                'creation': {'total': 0, 'avg_time': 0},
-                'submission': {'total': 0, 'avg_time': 0},
-                'cpu': {'total': 0, 'avg_time': 0}
-            }
+            if "creating data shard ring proof" in line:
+                data = json.loads(line)
+                frame_number = data.get('frame_number')
+                frame_age = float(data.get('frame_age', 0))
+                creation_data[frame_number] = {'age': frame_age}
+                metrics.add_creation(frame_age)
+            elif "submitting data proof" in line:
+                data = json.loads(line)
+                frame_number = data.get('frame_number')
+                frame_age = float(data.get('frame_age', 0))
+                if frame_number in creation_data:
+                    cpu_time = frame_age - creation_data[frame_number]['age']
+                    metrics.add_cpu_time(cpu_time)
+                metrics.add_submission(frame_age)
+        except:
+            continue
+    
+    return metrics.get_stats()
 
     def get_coin_data(self, start_time, end_time):
         try:
