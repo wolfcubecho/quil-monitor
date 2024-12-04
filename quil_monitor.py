@@ -472,40 +472,39 @@ class QuilNodeMonitor:
             date = datetime.now().strftime('%Y-%m-%d')
             
         try:
-            # First check if we have this date in history
+            # Check history first
             if 'landing_rates' in self.history and date in self.history['landing_rates']:
                 return self.history['landing_rates'][date]
 
-            # If not in history, calculate from processing metrics
+            # Get processing metrics for accurate frame count
             metrics = self.get_processing_metrics(date)
-            if not metrics:
-                return {'landing_rate': 0, 'transactions': 0, 'frames': 0}
+            total_frames = metrics['creation']['total'] if metrics and metrics['creation'] else 0
             
-            total_frames = metrics['creation']['total']
-            
-            # Get coin data for this date to count transactions
-            start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
-            end_time = datetime.strptime(f"{date} 23:59:59", '%Y-%m-%d %H:%M:%S')
-            
+            # Count successful transactions
             if 'coin_data' in self.history and date in self.history['coin_data']:
-                transactions = len(self.history['coin_data'][date])
+                # Count coins less than threshold (mining rewards)
+                transactions = sum(
+                    1 for coin in self.history['coin_data'][date] 
+                    if coin['amount'] <= 30  # Same threshold as earnings
+                )
             else:
+                start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
+                end_time = datetime.strptime(f"{date} 23:59:59", '%Y-%m-%d %H:%M:%S')
                 coins = self.get_coin_data(start_time, end_time)
-                transactions = len(coins) if coins else 0
+                transactions = sum(1 for coin in coins if coin['amount'] <= 30) if coins else 0
             
             # Calculate landing rate
             landing_rate = (transactions / total_frames * 100) if total_frames > 0 else 0
             
-            # Store result
             result = {
                 'landing_rate': landing_rate,
                 'transactions': transactions,
                 'frames': total_frames
             }
             
+            # Store in history
             if 'landing_rates' not in self.history:
                 self.history['landing_rates'] = {}
-                
             self.history['landing_rates'][date] = result
             self._save_history()
             
