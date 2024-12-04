@@ -466,47 +466,35 @@ class QuilNodeMonitor:
                 return [coin for coin in self.coin_cache 
                        if start_time <= coin['timestamp'] <= end_time]
             return []
-            
+
+    def get_coin_data_for_date(self, date):
+        """Helper method to get coin data for a specific date"""
+        if 'coin_data' in self.history and date in self.history['coin_data']:
+            return self.history['coin_data'][date]
+        return []
+        
     def calculate_landing_rate(self, date=None):
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
             
         try:
-            # Check history first
-            if 'landing_rates' in self.history and date in self.history['landing_rates']:
-                return self.history['landing_rates'][date]
-
-            # Get processing metrics for accurate frame count
             metrics = self.get_processing_metrics(date)
-            total_frames = metrics['creation']['total'] if metrics and metrics['creation'] else 0
+            total_frames = metrics['creation']['total'] if metrics else 0
             
-            # Count successful transactions
-            if 'coin_data' in self.history and date in self.history['coin_data']:
-                # Count coins less than threshold (mining rewards)
-                transactions = sum(
-                    1 for coin in self.history['coin_data'][date] 
-                    if coin['amount'] <= 30  # Same threshold as earnings
-                )
-            else:
-                start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
-                end_time = datetime.strptime(f"{date} 23:59:59", '%Y-%m-%d %H:%M:%S')
-                coins = self.get_coin_data(start_time, end_time)
-                transactions = sum(1 for coin in coins if coin['amount'] <= 30) if coins else 0
+            if total_frames == 0:
+                return {'landing_rate': 0, 'transactions': 0, 'frames': 0}
             
-            # Calculate landing rate
-            landing_rate = (transactions / total_frames * 100) if total_frames > 0 else 0
+            coins = self.get_coin_data_for_date(date)
+            transactions = sum(1 for coin in coins if coin['amount'] <= 30)
+            
+            # Cap landing rate at 100%
+            landing_rate = min((transactions / total_frames * 100), 100) if total_frames > 0 else 0
             
             result = {
                 'landing_rate': landing_rate,
                 'transactions': transactions,
                 'frames': total_frames
             }
-            
-            # Store in history
-            if 'landing_rates' not in self.history:
-                self.history['landing_rates'] = {}
-            self.history['landing_rates'][date] = result
-            self._save_history()
             
             return result
             
@@ -570,40 +558,24 @@ class QuilNodeMonitor:
                 'cpu': {'total': 0, 'avg_time': 0}
             }
 
-    def get_daily_earnings(self, date):
-        try:
-            TRANSFER_THRESHOLD = 30  # Filter out transactions larger than 30 QUIL
+    def get_daily_earnings_history(self, days=7):
+        earnings_data = []
+        total_earnings = 0
+        count_days = 0
+        today = datetime.now().date()
+        
+        for i in range(days):
+            date = (today - timedelta(days=i)).strftime('%Y-%m-%d')
+            earnings = self.get_daily_earnings(date)
+            if earnings > 0:  # Only count days with earnings
+                total_earnings += earnings
+                count_days += 1
+            earnings_data.append((date, earnings))
             
-            # First check if we have coin data in history
-            if 'coin_data' in self.history and date in self.history['coin_data']:
-                # Sum up all coin amounts for the date, excluding likely transfers
-                daily_earnings = sum(
-                    coin['amount'] 
-                    for coin in self.history['coin_data'][date] 
-                    if coin['amount'] <= TRANSFER_THRESHOLD
-                )
-                return daily_earnings
-            
-            # If no coin data in history for this date
-            start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
-            end_time = datetime.strptime(f"{date} 23:59:59", '%Y-%m-%d %H:%M:%S')
-            
-            # Get fresh coin data
-            coins = self.get_coin_data(start_time, end_time)
-            if not coins:
-                return 0
-            
-            # Sum up coins, excluding likely transfers
-            daily_earnings = sum(
-                coin['amount'] 
-                for coin in coins 
-                if coin['amount'] <= TRANSFER_THRESHOLD
-            )
-            return daily_earnings
-            
-        except Exception as e:
-            print(f"Error calculating earnings for {date}: {e}")
-            return 0
+        # Calculate true average based only on days with earnings
+        daily_avg = total_earnings / count_days if count_days > 0 else 0
+        
+        return earnings_data, daily_avg
             
     def get_earnings_history(self, days=7):
         earnings_data = []
@@ -647,9 +619,14 @@ class QuilNodeMonitor:
         
         for i in range(days):
             date = (today - timedelta(days=i)).strftime('%Y-%m-%d')
-            if date in self.history['landing_rates']:
-                landing_data.append(self.history['landing_rates'][date]['landing_rate'])
-            
+            metrics = self.get_processing_metrics(date)
+            if metrics and metrics['creation']['total'] > 0:
+                if date in self.history.get('daily_earnings', {}):
+                    frames = metrics['creation']['total']
+                    coins = sum(1 for coin in self.get_coin_data_for_date(date) if coin['amount'] <= 30)
+                    landing_rate = min((coins / frames * 100), 100) if frames > 0 else 0
+                    landing_data.append(landing_rate)
+
         return landing_data
 
     # Updated display_stats method
@@ -668,15 +645,14 @@ class QuilNodeMonitor:
         today_landing = self.calculate_landing_rate(today)
         
         if node_info:
-            earnings_data = self.get_earnings_history(7)
+            earnings_data, daily_avg = self.get_daily_earnings_history(7)
             landing_rates = self.get_landing_rate_history(7)
             
-            # Calculate earnings averages
-            daily_avg = sum(earn for _, earn in earnings_data) / len(earnings_data) if earnings_data else 0
+            # Calculate averages based on daily average
             weekly_avg = daily_avg * 7
             monthly_avg = daily_avg * 30
             
-            # Calculate landing rate averages
+            # Get landing rate average only from days with data
             daily_landing_avg = sum(landing_rates) / len(landing_rates) if landing_rates else 0
             
             # Color code the landing rate
