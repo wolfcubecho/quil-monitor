@@ -429,30 +429,39 @@ class QuilNodeMonitor:
             return self.history['coin_data'][date]
         return []
         
-    def calculate_landing_rate(self, date=None):
+     def calculate_landing_rate(self, date=None):
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
             
+        # For historical dates, return cached data
+        if date != datetime.now().strftime('%Y-%m-%d'):
+            if date in self.history.get('landing_rates', {}):
+                return self.history['landing_rates'][date]
+        
         try:
             metrics = self.get_processing_metrics(date)
             total_frames = metrics['creation']['total'] if metrics else 0
             
             if total_frames == 0:
-                return {'landing_rate': 0, 'transactions': 0, 'frames': 0}
+                result = {'landing_rate': 0, 'transactions': 0, 'frames': 0}
+            else:
+                start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
+                end_time = datetime.strptime(f"{date} 23:59:59", '%Y-%m-%d %H:%M:%S')
+                coins = self.get_coin_data(start_time, end_time)
+                
+                transactions = sum(1 for coin in coins if coin['amount'] <= 30)
+                landing_rate = min((transactions / total_frames * 100), 100)
+                
+                result = {
+                    'landing_rate': landing_rate,
+                    'transactions': transactions,
+                    'frames': total_frames
+                }
             
-            # Get coin data
-            start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
-            end_time = datetime.strptime(f"{date} 23:59:59", '%Y-%m-%d %H:%M:%S')
-            coins = self.get_coin_data(start_time, end_time)
-            
-            transactions = sum(1 for coin in coins if coin['amount'] <= 30)
-            landing_rate = min((transactions / total_frames * 100), 100) if total_frames > 0 else 0
-            
-            result = {
-                'landing_rate': landing_rate,
-                'transactions': transactions,
-                'frames': total_frames
-            }
+            # Cache today's results
+            if date == datetime.now().strftime('%Y-%m-%d'):
+                self.history['landing_rates'][date] = result
+                self._save_history()
             
             return result
             
@@ -463,15 +472,18 @@ class QuilNodeMonitor:
     def get_processing_metrics(self, date=None):
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
+            
+        # For historical dates, return cached data from history
+        if date != datetime.now().strftime('%Y-%m-%d'):
+            if date in self.history.get('processing_metrics', {}):
+                return self.history['processing_metrics'][date]
         
+        # For today, calculate fresh metrics
         metrics = ProcessingMetrics()
-        
-        # One single journalctl command combining both patterns
         cmd = f'journalctl -u ceremonyclient.service --since "{date} 00:00:00" --until "{date} 23:59:59" --no-hostname -o cat | grep -E "creating data shard ring proof|submitting data proof"'
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         
         creation_data = {}
-        
         for line in result.stdout.splitlines():
             try:
                 if "creating data shard ring proof" in line:
@@ -491,7 +503,14 @@ class QuilNodeMonitor:
             except:
                 continue
         
-        return metrics.get_stats()
+        stats = metrics.get_stats()
+        
+        # Cache today's metrics
+        if date == datetime.now().strftime('%Y-%m-%d'):
+            self.history['processing_metrics'][date] = stats
+            self._save_history()
+        
+        return stats
 
     def get_coin_data(self, start_time, end_time):
         try:
