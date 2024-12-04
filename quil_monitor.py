@@ -719,7 +719,7 @@ class QuilNodeMonitor:
 
         # Earnings History with Landing Rates
         print("\nHistory (Last 7 Days):")
-        for date, earnings in earnings_data:  # Use earnings_data directly from earlier
+        for date, earnings in self.get_daily_earnings_history(7)[0]:
             metrics = self.history['processing_metrics'].get(date, {})
             landing_data = self.history['landing_rates'].get(date, {})
             landing_rate = landing_data.get('landing_rate', 0)
