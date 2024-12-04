@@ -761,9 +761,9 @@ class QuilNodeMonitor:
             
             print(f"\nDaily Average:   {daily_avg:.6f} QUIL // ${daily_avg * quil_price:.2f} // "
                   f"{daily_color}{today_rate:.2f}%{COLORS['reset']}")
-            print(f"Weekly Average:  {week_avg:.6f} QUIL // ${week_avg * quil_price:.2f} // "
+            print(f"Weekly Average:  {daily_avg * 7:.6f} QUIL // ${daily_avg * 7 * quil_price:.2f} // "
                   f"{weekly_color}{week_avg:.2f}%{COLORS['reset']}")
-            print(f"Monthly Average: {monthly_avg:.6f} QUIL // ${monthly_avg * quil_price:.2f} // "
+            print(f"Monthly Average: {daily_avg * 30:.6f} QUIL // ${daily_avg * 30 * quil_price:.2f} // "
                   f"{monthly_color}{month_avg:.2f}%{COLORS['reset']}")
 
         print(f"\nToday's Stats ({today}):")
