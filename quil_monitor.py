@@ -882,15 +882,16 @@ def main():
         return
 
     check_sudo()
-    monitor = QuilNodeMonitor()
     
-    if args.export_csv:
-        monitor.csv_exporter.export_daily_data()
-        monitor.csv_exporter.export_shard_metrics()
-        print("Data exported to CSV files")
-        return
-
+    # Add overall timing
+    start_time = datetime.now()
+    
+    monitor = QuilNodeMonitor()
     monitor.display_stats()
+    
+    # Show total runtime
+    total_time = (datetime.now() - start_time).total_seconds()
+    print(f"\nTotal runtime: {total_time:.2f} seconds")
 
 if __name__ == "__main__":
     main()
