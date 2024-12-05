@@ -322,7 +322,7 @@ class QuilNodeMonitor:
                     'total': owned_balance,
                     'seniority': seniority
                 }
-            except Exception as e:
+        except Exception as e:
                 print(f"Error getting node info: {e}")
                 return None
 
