@@ -507,7 +507,7 @@ class QuilNodeMonitor:
         
         # Calculate earnings data and averages
         today = current_time.strftime('%Y-%m-%d')
-        today_earnings = self.get_daily_earnings(today)
+        today_earnings = self.get_daily_earnings(today) or 0  # Default to 0 if None
         today_metrics = self.get_processing_metrics(today)
         today_landing = self.calculate_landing_rate(today)
         
