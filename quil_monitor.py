@@ -482,7 +482,7 @@ class QuilNodeMonitor:
                 'cpu': {'total': 0, 'avg_time': 0}
             }
             
-   def get_coin_data(self, start_time, end_time):
+    def get_coin_data(self, start_time, end_time):
         result = subprocess.run(
             [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
             capture_output=True, text=True,
