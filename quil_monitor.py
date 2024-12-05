@@ -396,28 +396,28 @@ class QuilNodeMonitor:
 
             return coins
 
-    def calculate_daily_earnings(self, date=None):
-            if date is None:
-                date = datetime.now().strftime('%Y-%m-%d')
-            
-            today = datetime.now().strftime('%Y-%m-%d')
-            
-            # Return stored value for past days
-            if date != today:
-                return self.history.get('daily_earnings', {}).get(date, 0)
-            
-            # Calculate fresh for today
-            start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
-            end_time = datetime.now()
-            coins = self.get_coin_data(start_time, end_time)
-            
-            total_earnings = sum(coins)
-            # Store just the total
-            if 'daily_earnings' not in self.history:
-                self.history['daily_earnings'] = {}
-            self.history['daily_earnings'][today] = total_earnings
-            
-            return total_earnings
+    def get_daily_earnings(self, date=None):  # This is the correct name
+        if date is None:
+            date = datetime.now().strftime('%Y-%m-%d')
+        
+        today = datetime.now().strftime('%Y-%m-%d')
+        
+        # Return stored value for past days
+        if date != today:
+            return self.history.get('daily_earnings', {}).get(date, 0)
+        
+        # Calculate fresh for today
+        start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
+        end_time = datetime.now()
+        coins = self.get_coin_data(start_time, end_time)
+        
+        total_earnings = sum(coins)
+        # Store just the total
+        if 'daily_earnings' not in self.history:
+            self.history['daily_earnings'] = {}
+        self.history['daily_earnings'][today] = total_earnings
+        
+        return total_earnings
 
 
     def get_earnings_history(self, days=7):
