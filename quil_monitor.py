@@ -513,7 +513,9 @@ class QuilNodeMonitor:
         
         if node_info:
             earnings_data = self.get_earnings_history(7)
-            daily_avg = sum(earning for _, earning in earnings_data) / len(earnings_data) if earnings_data else 0
+            # Filter out any None values and ensure we have valid earnings
+            valid_earnings = [earn for _, earn in earnings_data if earn is not None]
+            daily_avg = sum(valid_earnings) / len(valid_earnings) if valid_earnings else 0
             weekly_avg = daily_avg * 7
             monthly_avg = daily_avg * 30
             
@@ -528,45 +530,46 @@ class QuilNodeMonitor:
             print(f"Weekly Average:  {weekly_avg:.6f} QUIL // ${weekly_avg * quil_price:.2f}")
             print(f"Monthly Average: {monthly_avg:.6f} QUIL // ${monthly_avg * quil_price:.2f}")
 
-        print(f"\nToday's Stats ({today}):")
-        print(f"Earnings:        {today_earnings:.6f} QUIL // ${today_earnings * quil_price:.2f}")
-        print(f"Landing Rate:    {today_landing['rate']:.2f}% ({today_landing['transactions']}/{today_landing['frames']} frames)")
-        
-        print("\nProcessing Analysis:")
-        self.display_processing_section("Creation Stage (Network Latency)", 
-                                     today_metrics['creation'], 
-                                     THRESHOLDS['creation'])
-        self.display_processing_section("Submission Stage (Total Time)", 
-                                     today_metrics['submission'], 
-                                     THRESHOLDS['submission'])
-        self.display_processing_section("CPU Processing Time", 
-                                     today_metrics['cpu'], 
-                                     THRESHOLDS['cpu'])
-
-        print("\nHistory (Last 7 Days):")
-        for date, earnings in earnings_data:
-            metrics = self.get_processing_metrics(date)
-            landing_data = self.calculate_landing_rate(date)
-            cpu_info = metrics.get('cpu', {})
-            avg_cpu = cpu_info.get('avg_time', 0)
+            print(f"\nToday's Stats ({today}):")
+            print(f"Earnings:        {today_earnings:.6f} QUIL // ${today_earnings * quil_price:.2f}")
+            print(f"Landing Rate:    {today_landing['rate']:.2f}% ({today_landing['transactions']}/{today_landing['frames']} frames)")
             
-            print(f"{date}: {earnings:.6f} QUIL // ${earnings * quil_price:.2f} "
-                  f"(Landing Rate: {landing_data['rate']:.2f}%, "
-                  f"{landing_data['transactions']}/{landing_data['frames']} frames, "
-                  f"Avg Process: {avg_cpu:.2f}s)")
+            print("\nProcessing Analysis:")
+            self.display_processing_section("Creation Stage (Network Latency)", 
+                                         today_metrics['creation'], 
+                                         THRESHOLDS['creation'])
+            self.display_processing_section("Submission Stage (Total Time)", 
+                                         today_metrics['submission'], 
+                                         THRESHOLDS['submission'])
+            self.display_processing_section("CPU Processing Time", 
+                                         today_metrics['cpu'], 
+                                         THRESHOLDS['cpu'])
 
-        # Check for daily report
-        if self.check_daily_report_time():
-            self.telegram.send_daily_summary(
-                balance=node_info['total'],
-                earnings=today_earnings,
-                avg_earnings=daily_avg,
-                metrics=today_metrics,
-                quil_price=quil_price,
-                landing_rate=today_landing
-            )
-         
-            # Save history once at the very end if needed
+            print("\nHistory (Last 7 Days):")
+            for date, earnings in earnings_data:
+                if earnings is not None:  # Only display valid earnings
+                    metrics = self.get_processing_metrics(date)
+                    landing_data = self.calculate_landing_rate(date)
+                    cpu_info = metrics.get('cpu', {})
+                    avg_cpu = cpu_info.get('avg_time', 0)
+                    
+                    print(f"{date}: {earnings:.6f} QUIL // ${earnings * quil_price:.2f} "
+                          f"(Landing Rate: {landing_data['rate']:.2f}%, "
+                          f"{landing_data['transactions']}/{landing_data['frames']} frames, "
+                          f"Avg Process: {avg_cpu:.2f}s)")
+
+            # Check for daily report
+            if self.check_daily_report_time():
+                self.telegram.send_daily_summary(
+                    balance=node_info['total'],
+                    earnings=today_earnings,
+                    avg_earnings=daily_avg,
+                    metrics=today_metrics,
+                    quil_price=quil_price,
+                    landing_rate=today_landing
+                )
+
+            # Save history once at the end if it changed
             self._save_history()
 
     def display_processing_section(self, title, stats, thresholds):
