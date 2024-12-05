@@ -428,7 +428,7 @@ class QuilNodeMonitor:
                             for coin in self.coin_cache 
                             if isinstance(coin.get('timestamp'), datetime)
                         )
-                            }]
+                        ]}
                     self.history['last_coin_update'] = current_time.strftime('%Y-%m-%dT%H:%M:%SZ')
                     self._save_history()
 
