@@ -35,10 +35,6 @@ THRESHOLDS = {
     'cpu': {
         'good': 20,      # 0-20s
         'warning': 30    # 20-30s, >30s critical
-    },
-    'landing_rate': {
-        'good': 80,      # >80%
-        'warning': 70    # 70-80%, <70% critical
     }
 }
 
@@ -62,17 +58,17 @@ class ProcessingMetrics:
         self.creation_times = []
         self.submission_times = []
         self.cpu_times = []
-        
+
     def add_creation(self, time):
         self.creation_times.append(float(time))
-        
+
     def add_submission(self, time):
         self.submission_times.append(float(time))
-        
+
     def add_cpu_time(self, time):
         if time > 0:  # Only add positive CPU times
             self.cpu_times.append(float(time))
-        
+
     def calculate_stats(self, times, thresholds):
         if not times:
             return {
@@ -85,12 +81,12 @@ class ProcessingMetrics:
                 'critical_pct': 0,
                 'avg_time': 0
             }
-            
+
         total = len(times)
         good = sum(1 for t in times if t <= thresholds['good'])
         warning = sum(1 for t in times if thresholds['good'] < t <= thresholds['warning'])
         critical = sum(1 for t in times if t > thresholds['warning'])
-        
+
         return {
             'total': total,
             'good': good,
@@ -101,7 +97,7 @@ class ProcessingMetrics:
             'critical_pct': (critical/total)*100 if total > 0 else 0,
             'avg_time': sum(times)/total if total > 0 else 0
         }
-        
+
     def get_stats(self):
         return {
             'creation': self.calculate_stats(self.creation_times, THRESHOLDS['creation']),
@@ -131,7 +127,7 @@ class TelegramNotifier:
             prefix = "🚨 ALERT: " if alert_type != 'info' else ""
             if alert_type == 'daily_report':
                 prefix = ""
-            
+
             data = {
                 'chat_id': self.config['chat_id'],
                 'text': f"{prefix}{message}\n\nTime: {current_time.strftime('%Y-%m-%d %H:%M:%S')}",
@@ -144,17 +140,17 @@ class TelegramNotifier:
             print(f"Failed to send Telegram message: {e}")
 
     def send_daily_summary(self, balance: float, earnings: float, avg_earnings: float, 
-                         metrics: dict, quil_price: float, landing_rate: dict):
+                         metrics: dict, quil_price: float):
         if not self.config['enabled'] or not self.is_valid_config():
             return
 
         try:
             current_time = datetime.now()
             current_date = current_time.strftime('%Y-%m-%d')
-            
+
             if self.last_report_date == current_date:
                 return
-                
+
             earn_diff_pct = ((earnings - avg_earnings) / avg_earnings * 100) if avg_earnings > 0 else 0
             comparison = "higher" if earn_diff_pct > 0 else "lower"
 
@@ -163,18 +159,16 @@ class TelegramNotifier:
                 f"Date: {current_date}\n\n"
                 f"💰 Balance: {balance:.6f} QUIL (${balance * quil_price:.2f})\n"
                 f"📈 Daily Earnings: {earnings:.6f} QUIL (${earnings * quil_price:.2f})\n"
-                f"🔄 {abs(earn_diff_pct):.1f}% {comparison} than average\n"
-                f"🎯 Landing Rate: {landing_rate['rate']:.2f}% "
-                f"({landing_rate['transactions']}/{landing_rate['frames']} frames)\n\n"
+                f"🔄 {abs(earn_diff_pct):.1f}% {comparison} than average\n\n"
                 f"⚡ Processing Performance:\n"
                 f"Creation: {metrics['creation']['avg_time']:.2f}s avg ({metrics['creation']['total']} proofs)\n"
                 f"Submission: {metrics['submission']['avg_time']:.2f}s avg\n"
                 f"CPU Time: {metrics['cpu']['avg_time']:.2f}s avg"
             )
-            
+
             self.send_message(message, alert_type='daily_report')
             self.last_report_date = current_date
-            
+
         except Exception as e:
             print(f"Failed to send daily summary: {e}")
 
@@ -186,37 +180,18 @@ class TelegramNotifier:
 class QuilNodeMonitor:
     def __init__(self, log_file="quil_metrics.json"):
         self.log_file = log_file
-        self.history = {
-            'daily_balance': {},
-            'daily_earnings': {},
-            'landing_rates': {}
-        }
+        self.history = {'daily_balance': {}, 'processing_metrics': {}}
         self.load_history()
         self.node_binary = self._get_latest_node_binary()
-        self.qclient_binary = self._get_latest_qclient_binary()
         self.telegram = TelegramNotifier(TELEGRAM_CONFIG)
-
-    def load_history(self):
-        if os.path.exists(self.log_file):
-            try:
-                with open(self.log_file, 'r') as f:
-                    self.history = json.load(f)
-            except Exception as e:
-                print(f"Error loading history (will start fresh): {e}")
-
-    def _save_history(self):
-        try:
-            with open(self.log_file, 'w') as f:
-                json.dump(self.history, f, indent=2)
-        except Exception as e:
-            print(f"Error saving history: {e}")
+        self.last_report_check = datetime.now().replace(hour=0, minute=0, second=0)
 
     def _get_latest_node_binary(self):
         try:
             node_binaries = glob.glob('./node-*-linux-amd64')
             if not node_binaries:
                 raise Exception("No node binary found")
-            
+
             def get_version_tuple(binary):
                 version_match = re.search(r'node-(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?-linux-amd64', binary)
                 if version_match:
@@ -227,45 +202,36 @@ class QuilNodeMonitor:
 
             node_binaries.sort(key=get_version_tuple, reverse=True)
             latest_binary = node_binaries[0]
-            
+
             if not os.path.exists(latest_binary):
                 raise Exception(f"Binary {latest_binary} not found")
             if not os.access(latest_binary, os.X_OK):
                 raise Exception(f"Binary {latest_binary} is not executable")
-            
+
             print(f"Using node binary: {latest_binary}")
             return latest_binary
         except Exception as e:
             print(f"Error finding node binary: {e}")
             sys.exit(1)
 
-    def _get_latest_qclient_binary(self):
-        try:
-            qclient_binaries = glob.glob('./qclient-*-linux-amd64')
-            if not qclient_binaries:
-                raise Exception("No qclient binary found")
-            
-            def get_version_tuple(binary):
-                version_match = re.search(r'qclient-(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?-linux-amd64', binary)
-                if version_match:
-                    parts = list(version_match.groups())
-                    parts[3] = parts[3] if parts[3] is not None else '0'
-                    return tuple(int(x) for x in parts)
-                return (0, 0, 0, 0)
+    def load_history(self):
+        if os.path.exists(self.log_file):
+            try:
+                with open(self.log_file, 'r') as f:
+                    saved_data = json.load(f)
+                    if 'daily_balance' in saved_data:
+                        self.history['daily_balance'].update(saved_data['daily_balance'])
+                    if 'processing_metrics' in saved_data:
+                        self.history['processing_metrics'].update(saved_data['processing_metrics'])
+            except Exception as e:
+                print(f"Error loading history (will start fresh): {e}")
 
-            qclient_binaries.sort(key=get_version_tuple, reverse=True)
-            latest_binary = qclient_binaries[0]
-            
-            if not os.path.exists(latest_binary):
-                raise Exception(f"Binary {latest_binary} not found")
-            if not os.access(latest_binary, os.X_OK):
-                os.chmod(latest_binary, 0o755)
-            
-            print(f"Using qclient binary: {latest_binary}")
-            return latest_binary
+    def _save_history(self):
+        try:
+            with open(self.log_file, 'w') as f:
+                json.dump(self.history, f, indent=2)
         except Exception as e:
-            print(f"Error finding qclient binary: {e}")
-            sys.exit(1)
+            print(f"Error saving history: {e}")
 
     def get_quil_price(self):
         try:
@@ -285,19 +251,25 @@ class QuilNodeMonitor:
         try:
             result = subprocess.run([self.node_binary, '--node-info'], 
                                  capture_output=True, text=True)
-            
+
             if result.returncode != 0:
                 return None
 
+            # Get ring number
             ring_match = re.search(r'Prover Ring: (\d+)', result.stdout)
             ring = int(ring_match.group(1)) if ring_match else 0
 
+            # Get seniority
             seniority_match = re.search(r'Seniority: (\d+)', result.stdout)
             seniority = int(seniority_match.group(1)) if seniority_match else 0
 
+            # Get active workers from node info
+            workers_match = re.search(r'Max Frame: (\d+)', result.stdout)
+            # Get active workers correctly from node info
             workers_match = re.search(r'Active Workers: (\d+)', result.stdout)
             active_workers = int(workers_match.group(1)) if workers_match else 0
 
+            # Get balance
             owned_balance_match = re.search(r'Owned balance: ([\d.]+) QUIL', result.stdout)
             owned_balance = float(owned_balance_match.group(1)) if owned_balance_match else 0
 
@@ -319,37 +291,51 @@ class QuilNodeMonitor:
     def get_processing_metrics(self, date=None):
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
-        
+
         metrics = ProcessingMetrics()
         start_time = f"{date} 00:00:00"
         end_time = f"{date} 23:59:59"
 
         try:
-            cmd = f'journalctl -u ceremonyclient.service --since "{start_time}" --until "{end_time}" --no-hostname -o cat | grep -E "creating data shard ring proof|submitting data proof"'
+            # Get creation times first and store them
+            cmd = f'journalctl -u ceremonyclient.service --since "{start_time}" --until "{end_time}" --no-hostname -o cat | grep -i "creating data shard ring proof"'
             result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-            
+
             creation_data = {}
             for line in result.stdout.splitlines():
                 try:
-                    if "creating data shard ring proof" in line:
-                        data = json.loads(line)
-                        frame_number = data.get('frame_number')
-                        frame_age = float(data.get('frame_age', 0))
-                        creation_data[frame_number] = {'age': frame_age}
-                        metrics.add_creation(frame_age)
-                    elif "submitting data proof" in line:
-                        data = json.loads(line)
-                        frame_number = data.get('frame_number')
-                        frame_age = float(data.get('frame_age', 0))
-                        if frame_number in creation_data:
-                            cpu_time = frame_age - creation_data[frame_number]['age']
-                            metrics.add_cpu_time(cpu_time)
-                        metrics.add_submission(frame_age)
+                    data = json.loads(line)
+                    frame_number = data.get('frame_number')
+                    frame_age = float(data.get('frame_age', 0))
+                    creation_data[frame_number] = {'age': frame_age, 'timestamp': float(data.get('ts', 0))}
+                    metrics.add_creation(frame_age)
                 except:
                     continue
 
-            return metrics.get_stats()
-            
+            # Get submission times and calculate CPU times
+            cmd = f'journalctl -u ceremonyclient.service --since "{start_time}" --until "{end_time}" --no-hostname -o cat | grep -i "submitting data proof"'
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+
+            for line in result.stdout.splitlines():
+                try:
+                    data = json.loads(line)
+                    frame_number = data.get('frame_number')
+                    frame_age = float(data.get('frame_age', 0))
+
+                    if frame_number in creation_data:
+                        creation_age = creation_data[frame_number]['age']
+                        cpu_time = frame_age - creation_age
+                        metrics.add_cpu_time(cpu_time)
+
+                    metrics.add_submission(frame_age)
+                except:
+                    continue
+
+            stats = metrics.get_stats()
+            self.history['processing_metrics'][date] = stats
+            self._save_history()
+            return stats
+
         except Exception as e:
             print(f"Error getting processing metrics: {e}")
             return {
@@ -358,65 +344,56 @@ class QuilNodeMonitor:
                 'cpu': {'total': 0, 'avg_time': 0}
             }
 
-    def get_coin_data(self, start_time, end_time):
-        result = subprocess.run(
-            [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
-            capture_output=True, text=True,
-            encoding='utf-8'
-        )
-        
-        if result.returncode != 0:
-            return []
-
-        coins = []
-        for line in result.stdout.splitlines():
-            try:
-                amount_match = re.search(r'([\d.]+)\s*QUIL', line)
-                frame_match = re.search(r'Frame\s*(\d+)', line)
-                timestamp_match = re.search(r'Timestamp\s*([\d-]+T[\d:]+Z)', line)
-                
-                if amount_match and frame_match and timestamp_match:
-                    timestamp_str = timestamp_match.group(1)
-                    if timestamp_str:
-                        timestamp = datetime.strptime(timestamp_str, '%Y-%m-%dT%H:%M:%SZ')
-                        if start_time <= timestamp <= end_time:
-                            amount = float(amount_match.group(1))
-                            if amount <= 30:  # Only track mining rewards
-                                coins.append({
-                                    'amount': amount,
-                                    'frame': int(frame_match.group(1))
-                                })
-            except:
-                continue
-
-        return coins
 
     def get_daily_earnings(self, date):
-        today = datetime.now().strftime('%Y-%m-%d')
-        
-        # For historical dates, just return stored value
-        if date != today:
-            return self.history.get('daily_earnings', {}).get(date, 0)
-        
-        # For today, get stored earnings so far
-        current_earnings = self.history.get('daily_earnings', {}).get(today, 0)
-        
-        # Calculate any new earnings
-        start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
-        end_time = datetime.now()
-        coins = self.get_coin_data(start_time, end_time)
-        
-        # Sum up new mining rewards
-        new_earnings = sum(coin['amount'] for coin in coins)
-        
-        # Add to running total and save
-        total_earnings = current_earnings + new_earnings
-        if 'daily_earnings' not in self.history:
-            self.history['daily_earnings'] = {}
-        self.history['daily_earnings'][today] = total_earnings
-        self._save_history()
-        
-        return total_earnings
+        try:
+            yesterday = (datetime.strptime(date, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d')
+
+            if yesterday not in self.history['daily_balance']:
+                return 0
+
+            if date not in self.history['daily_balance']:
+                if date == datetime.now().strftime('%Y-%m-%d'):
+                    node_info = self.get_node_info()
+                    if node_info is None:
+                        return 0
+                    current_balance = node_info['owned']
+                else:
+                    return 0
+            else:
+                current_balance = self.history['daily_balance'][date]
+
+            yesterday_balance = self.history['daily_balance'][yesterday]
+            earnings = current_balance - yesterday_balance
+            return earnings
+
+        except Exception as e:
+            print(f"Error calculating earnings for {date}: {e}")
+            return 0
+
+    def check_daily_report_time(self):
+        current_time = datetime.now()
+        last_run_file = "last_report.txt"
+
+        try:
+            if os.path.exists(last_run_file):
+                with open(last_run_file, 'r') as f:
+                    last_run = datetime.strptime(f.read().strip(), '%Y-%m-%d')
+            else:
+                last_run = current_time - timedelta(days=1)
+
+            if (current_time.date() > last_run.date() and 
+                current_time.hour == TELEGRAM_CONFIG['daily_report_hour'] and 
+                current_time.minute >= TELEGRAM_CONFIG['daily_report_minute']):
+
+                with open(last_run_file, 'w') as f:
+                    f.write(current_time.strftime('%Y-%m-%d'))
+                return True
+
+        except Exception as e:
+            print(f"Error checking daily report time: {e}")
+
+        return False
 
     def get_earnings_history(self, days=7):
         earnings_data = []
@@ -429,103 +406,39 @@ class QuilNodeMonitor:
 
         return earnings_data
 
-    def calculate_landing_rate(self, date=None):
-        if date is None:
-            date = datetime.now().strftime('%Y-%m-%d')
-            
-        today = datetime.now().strftime('%Y-%m-%d')
-        
-        # For historical dates, return stored rate
-        if date != today:
-            return self.history.get('landing_rates', {}).get(date, {'rate': 0, 'transactions': 0, 'frames': 0})
-        
-        # Calculate fresh for today
-        metrics = self.get_processing_metrics(date)
-        total_frames = metrics['creation']['total'] if metrics else 0
-        
-        if total_frames == 0:
-            return {'rate': 0, 'transactions': 0, 'frames': 0}
-        
-        start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
-        end_time = datetime.now()
-        coins = self.get_coin_data(start_time, end_time)
-        
-        transactions = len(coins)  # Coins are already filtered to ≤ 30 QUIL
-        landing_rate = min((transactions / total_frames * 100), 100)
-        
-        result = {
-            'rate': landing_rate,
-            'transactions': transactions,
-            'frames': total_frames
-        }
-        
-        # Save today's results
-        if 'landing_rates' not in self.history:
-            self.history['landing_rates'] = {}
-        self.history['landing_rates'][today] = result
-        self._save_history()
-        
-        return result
-
-    def check_daily_report_time(self):
-        current_time = datetime.now()
-        last_run_file = "last_report.txt"
-        
-        try:
-            if os.path.exists(last_run_file):
-                with open(last_run_file, 'r') as f:
-                    last_run = datetime.strptime(f.read().strip(), '%Y-%m-%d')
-            else:
-                last_run = current_time - timedelta(days=1)
-
-            if (current_time.date() > last_run.date() and 
-                current_time.hour == TELEGRAM_CONFIG['daily_report_hour'] and 
-                current_time.minute >= TELEGRAM_CONFIG['daily_report_minute']):
-                
-                with open(last_run_file, 'w') as f:
-                    f.write(current_time.strftime('%Y-%m-%d'))
-                return True
-                
-        except Exception as e:
-            print(f"Error checking daily report time: {e}")
-        
-        return False
-
     def display_stats(self):
         print("\n=== QUIL Node Statistics ===")
         current_time = datetime.now()
         print(f"Time: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        
+
         node_info = self.get_node_info()
         quil_price = self.get_quil_price()
-        
+
         # Calculate earnings data and averages
         today = current_time.strftime('%Y-%m-%d')
         today_earnings = self.get_daily_earnings(today)
         today_metrics = self.get_processing_metrics(today)
-        today_landing = self.calculate_landing_rate(today)
-        
+
         if node_info:
-            earnings_data = self.get_earnings_history(7)
-            daily_avg = sum(earning for _, earning in earnings_data) / len(earnings_data) if earnings_data else 0
+            earnings_data = self.get_earnings_history(7)  # Get last 7 days
+            daily_avg = sum(earn for _, earn in earnings_data) / len(earnings_data) if earnings_data else 0
             weekly_avg = daily_avg * 7
             monthly_avg = daily_avg * 30
-            
+
             print(f"\nNode Information:")
             print(f"Ring:            {node_info['ring']}")
             print(f"Active Workers:  {node_info['active_workers']}")
             print(f"Seniority:      {node_info['seniority']}")
             print(f"QUIL Price:      ${quil_price:.4f}")
             print(f"QUIL on Node:    {node_info['total']:.6f}")
-            
-            print(f"\nDaily Average:   {daily_avg:.6f} QUIL // ${daily_avg * quil_price:.2f}")
+            print(f"Daily Average:   {daily_avg:.6f} QUIL // ${daily_avg * quil_price:.2f}")
             print(f"Weekly Average:  {weekly_avg:.6f} QUIL // ${weekly_avg * quil_price:.2f}")
             print(f"Monthly Average: {monthly_avg:.6f} QUIL // ${monthly_avg * quil_price:.2f}")
 
+        # Today's Stats and Processing Analysis
         print(f"\nToday's Stats ({today}):")
         print(f"Earnings:        {today_earnings:.6f} QUIL // ${today_earnings * quil_price:.2f}")
-        print(f"Landing Rate:    {today_landing['rate']:.2f}% ({today_landing['transactions']}/{today_landing['frames']} frames)")
-        
+
         print("\nProcessing Analysis:")
         self.display_processing_section("Creation Stage (Network Latency)", 
                                      today_metrics['creation'], 
@@ -537,17 +450,15 @@ class QuilNodeMonitor:
                                      today_metrics['cpu'], 
                                      THRESHOLDS['cpu'])
 
-        print("\nHistory (Last 7 Days):")
-        for date, earnings in earnings_data:
-            metrics = self.get_processing_metrics(date)
-            landing_data = self.calculate_landing_rate(date)
+        # Earnings History
+        print("\nEarnings History:")
+        for date, earnings in self.get_earnings_history(7):
+            metrics = self.history['processing_metrics'].get(date, {})
             cpu_info = metrics.get('cpu', {})
+            total_proofs = metrics.get('creation', {}).get('total', 0)
             avg_cpu = cpu_info.get('avg_time', 0)
-            
             print(f"{date}: {earnings:.6f} QUIL // ${earnings * quil_price:.2f} "
-                  f"(Landing Rate: {landing_data['rate']:.2f}%, "
-                  f"{landing_data['transactions']}/{landing_data['frames']} frames, "
-                  f"Avg Process: {avg_cpu:.2f}s)")
+                  f"(Avg Process: {avg_cpu:.2f}s, {total_proofs} proofs)")
 
         # Check for daily report
         if self.check_daily_report_time():
@@ -556,24 +467,23 @@ class QuilNodeMonitor:
                 earnings=today_earnings,
                 avg_earnings=daily_avg,
                 metrics=today_metrics,
-                quil_price=quil_price,
-                landing_rate=today_landing
+                quil_price=quil_price
             )
 
     def display_processing_section(self, title, stats, thresholds):
         print(f"\n{title}:")
         print(f"  Total Proofs:    {stats['total']}")
         print(f"  Average Time:    {stats['avg_time']:.2f}s")
-        
+
         # Display categories with color coding
         color = COLORS['green'] if stats['good_pct'] > 50 else COLORS['reset']
         print(f"  0-{thresholds['good']}s:         "
               f"{color}{stats['good']} proofs ({stats['good_pct']:.1f}%){COLORS['reset']}")
-        
+
         color = COLORS['yellow'] if stats['warning_pct'] > 50 else COLORS['reset']
         print(f"  {thresholds['good']}-{thresholds['warning']}s:     "
               f"{color}{stats['warning']} proofs ({stats['warning_pct']:.1f}%){COLORS['reset']}")
-        
+
         color = COLORS['red'] if stats['critical_pct'] > 50 else COLORS['reset']
         print(f"  >{thresholds['warning']}s:         "
               f"{color}{stats['critical']} proofs ({stats['critical_pct']:.1f}%){COLORS['reset']}")
@@ -582,11 +492,11 @@ def setup_telegram():
     print("\nTelegram Bot Setup:")
     print("1. Message @BotFather on Telegram to create a new bot and get the token")
     print("2. Message @userinfobot to get your chat ID")
-    
+
     token = input("\nEnter your bot token: ").strip()
     chat_id = input("Enter your chat ID: ").strip()
     node_name = input("Enter node identifier (e.g., Node-1): ").strip()
-    
+
     config = {
         'bot_token': token,
         'chat_id': chat_id,
@@ -595,14 +505,14 @@ def setup_telegram():
         'daily_report_hour': 0,
         'daily_report_minute': 5
     }
-    
+
     notifier = TelegramNotifier(config)
     notifier.send_message("Test message from QUIL Monitor")
-    
+
     config_file = "telegram_config.json"
     with open(config_file, 'w') as f:
         json.dump(config, f, indent=2)
-    
+
     print(f"\nConfiguration saved to {config_file}")
     print("Add these values to the TELEGRAM_CONFIG in the script")
 
@@ -618,7 +528,7 @@ def main():
 
     check_sudo()
     monitor = QuilNodeMonitor()
-    
+
     if args.export_csv:
         monitor.csv_exporter.export_daily_data()
         monitor.csv_exporter.export_shard_metrics()
