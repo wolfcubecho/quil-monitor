@@ -376,51 +376,38 @@ class QuilNodeMonitor:
             return None
 
     def get_coin_data(self, start_time, end_time):
-        query_start = datetime.now()
-        try:
-            result = subprocess.run(
-                [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
-                capture_output=True, text=True,
-                encoding='utf-8'
-            )
-            
-            if result.returncode != 0:
-                return []
-
-            process_start = datetime.now()
-            coins = []
-            for line in result.stdout.splitlines():
-                try:
-                    amount_match = re.search(r'([\d.]+)\s*QUIL', line)
-                    frame_match = re.search(r'Frame\s*(\d+)', line)
-                    timestamp_match = re.search(r'Timestamp\s*([\d-]+T[\d:]+Z)', line)
-                    
-                    if amount_match and frame_match and timestamp_match:
-                        timestamp_str = timestamp_match.group(1)
-                        if timestamp_str:
-                            timestamp = datetime.strptime(timestamp_str, '%Y-%m-%dT%H:%M:%SZ')
-                            if start_time <= timestamp <= end_time:
-                                coin = {
-                                    'amount': float(amount_match.group(1)),
-                                    'frame': int(frame_match.group(1)),
-                                    'timestamp': timestamp
-                                }
-                                coins.append(coin)
-                except:
-                    continue
-
-            total_time = (datetime.now() - query_start).total_seconds()
-            process_time = (datetime.now() - process_start).total_seconds()
-            print(f"\nCoin Data Performance:")
-            print(f"Query time: {(process_start - query_start).total_seconds():.2f}s")
-            print(f"Processing time: {process_time:.2f}s")
-            print(f"Total time: {total_time:.2f}s")
-
-            return coins
-            
-        except Exception as e:
-            print(f"Error getting coin data: {e}")
+        """Just get coin data for calculations, don't store anything"""
+        result = subprocess.run(
+            [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
+            capture_output=True, text=True,
+            encoding='utf-8'
+        )
+        
+        if result.returncode != 0:
             return []
+
+        coins = []
+        for line in result.stdout.splitlines():
+            try:
+                amount_match = re.search(r'([\d.]+)\s*QUIL', line)
+                frame_match = re.search(r'Frame\s*(\d+)', line)
+                timestamp_match = re.search(r'Timestamp\s*([\d-]+T[\d:]+Z)', line)
+                
+                if amount_match and frame_match and timestamp_match:
+                    timestamp_str = timestamp_match.group(1)
+                    if timestamp_str:
+                        timestamp = datetime.strptime(timestamp_str, '%Y-%m-%dT%H:%M:%SZ')
+                        if start_time <= timestamp <= end_time:
+                            amount = float(amount_match.group(1))
+                            if amount <= 30:  # Only track mining rewards
+                                coins.append({
+                                    'amount': amount,
+                                    'frame': int(frame_match.group(1))
+                                })
+            except:
+                continue
+
+        return coins
 
     def get_coin_data_for_date(self, date):
         """Helper method to get coin data for a specific date"""
@@ -429,14 +416,9 @@ class QuilNodeMonitor:
         return []
         
     def calculate_landing_rate(self, date=None):
+        """Calculate landing rate and store just the final results"""
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
-            
-        today = datetime.now().strftime('%Y-%m-%d')
-        
-        # Use cached data for historical dates
-        if date != today and date in self.history.get('landing_rates', {}):
-            return self.history['landing_rates'][date]
             
         try:
             metrics = self.get_processing_metrics(date)
@@ -449,7 +431,7 @@ class QuilNodeMonitor:
             end_time = datetime.strptime(f"{date} 23:59:59", '%Y-%m-%d %H:%M:%S')
             coins = self.get_coin_data(start_time, end_time)
             
-            transactions = sum(1 for coin in coins if coin['amount'] <= 30)
+            transactions = len(coins)  # All coins are already filtered to <= 30
             landing_rate = min((transactions / total_frames * 100), 100)
             
             result = {
@@ -458,9 +440,12 @@ class QuilNodeMonitor:
                 'frames': total_frames
             }
             
-            if date == today:
+            # Only store the results, not raw data
+            if date == datetime.now().strftime('%Y-%m-%d'):
+                if 'landing_rates' not in self.history:
+                    self.history['landing_rates'] = {}
                 self.history['landing_rates'][date] = result
-                
+            
             return result
             
         except Exception as e:
