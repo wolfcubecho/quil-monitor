@@ -208,23 +208,7 @@ class QuilNodeMonitor:
             earnings_data.append((date, earnings))
             
         return earnings_data
-
-    def fix_history_timestamps(self):
-        try:
-            if 'coin_data' in self.history:
-                for date in self.history['coin_data']:
-                    for coin in self.history['coin_data'][date]:
-                        if 'timestamp' in coin and isinstance(coin['timestamp'], datetime):
-                            coin['timestamp'] = coin['timestamp'].strftime('%Y-%m-%dT%H:%M:%SZ')
-            
-            if 'last_coin_update' in self.history and isinstance(self.history['last_coin_update'], datetime):
-                self.history['last_coin_update'] = self.history['last_coin_update'].strftime('%Y-%m-%dT%H:%M:%SZ')
-            
-            self._save_history()
-            print("History timestamps fixed successfully")
-        except Exception as e:
-            print(f"Error fixing history timestamps: {e}")
-
+    
     def _get_latest_node_binary(self):
         try:
             node_binaries = glob.glob('./node-*-linux-amd64')
@@ -412,40 +396,40 @@ class QuilNodeMonitor:
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
             
-        # Use cached landing rates for historical dates
         today = datetime.now().strftime('%Y-%m-%d')
-        if date != today and date in self.history.get('landing_rates', {}):
-            return self.history['landing_rates'][date]
-            
-        try:
-            metrics = self.get_processing_metrics(date)
-            total_frames = metrics['creation']['total'] if metrics else 0
-            
-            if total_frames == 0:
-                return {'landing_rate': 0, 'transactions': 0, 'frames': 0}
-            
-            start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
-            end_time = datetime.strptime(f"{date} 23:59:59", '%Y-%m-%d %H:%M:%S')
-            coins = self.get_coin_data(start_time, end_time)
-            
-            transactions = len(coins)
-            landing_rate = min((transactions / total_frames * 100), 100)
-            
-            result = {
-                'landing_rate': landing_rate,
-                'transactions': transactions,
-                'frames': total_frames
-            }
-            
-            # Only store today's results
-            if date == today:
-                self.history['landing_rates'][date] = result
-            
-            return result
-            
-        except Exception as e:
-            print(f"Error calculating landing rate: {e}")
-            return {'landing_rate': 0, 'transactions': 0, 'frames': 0}
+        
+        # For historical dates, return stored rate
+        if date != today:
+            return self.history.get('landing_rates', {}).get(date, {'rate': 0, 'transactions': 0, 'frames': 0})
+        
+        # Calculate fresh for today
+        metrics = self.get_processing_metrics(date)
+        total_frames = metrics['creation']['total'] if metrics else 0
+        
+        if total_frames == 0:
+            return {'rate': 0, 'transactions': 0, 'frames': 0}
+        
+        start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
+        end_time = datetime.now()
+        coins = self.get_coin_data(start_time, end_time)
+        
+        # Only count mining rewards
+        transactions = len([coin for coin in coins if coin['amount'] <= 30])
+        landing_rate = min((transactions / total_frames * 100), 100)
+        
+        result = {
+            'rate': landing_rate,
+            'transactions': transactions,
+            'frames': total_frames
+        }
+        
+        # Save today's results
+        if 'landing_rates' not in self.history:
+            self.history['landing_rates'] = {}
+        self.history['landing_rates'][today] = result
+        self._save_history()
+        
+        return result
             
     def get_processing_metrics(self, date=None):
         if date is None:
@@ -498,8 +482,7 @@ class QuilNodeMonitor:
                 'cpu': {'total': 0, 'avg_time': 0}
             }
             
-    def get_coin_data(self, start_time, end_time):
-        """Just calculate coins, don't store anything"""
+   def get_coin_data(self, start_time, end_time):
         result = subprocess.run(
             [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
             capture_output=True, text=True,
@@ -521,43 +504,41 @@ class QuilNodeMonitor:
                     if timestamp_str:
                         timestamp = datetime.strptime(timestamp_str, '%Y-%m-%dT%H:%M:%SZ')
                         if start_time <= timestamp <= end_time:
-                            amount = float(amount_match.group(1))
-                            if amount <= 30:  # Only track mining rewards
-                                coins.append({
-                                    'amount': amount,
-                                    'frame': int(frame_match.group(1))
-                                })
+                            coins.append({
+                                'amount': float(amount_match.group(1)),
+                                'frame': int(frame_match.group(1))
+                            })
             except:
                 continue
 
         return coins
             
     def get_daily_earnings(self, date):
-        """Calculate earnings from balance changes"""
-        try:
-            yesterday = (datetime.strptime(date, '%Y-%m-%d') - timedelta(days=1)).strftime('%Y-%m-%d')
-            
-            if yesterday not in self.history['daily_balance']:
-                return 0
-                
-            if date not in self.history['daily_balance']:
-                if date == datetime.now().strftime('%Y-%m-%d'):
-                    node_info = self.get_node_info()
-                    if node_info is None:
-                        return 0
-                    current_balance = node_info['owned']
-                else:
-                    return 0
-            else:
-                current_balance = self.history['daily_balance'][date]
-                
-            yesterday_balance = self.history['daily_balance'][yesterday]
-            earnings = current_balance - yesterday_balance
-            return earnings
-            
-        except Exception as e:
-            print(f"Error calculating earnings for {date}: {e}")
-            return 0
+        today = datetime.now().strftime('%Y-%m-%d')
+        
+        # For historical dates, just return stored value
+        if date != today:
+            return self.history.get('daily_earnings', {}).get(date, 0)
+        
+        # For today, get stored earnings so far
+        current_earnings = self.history.get('daily_earnings', {}).get(today, 0)
+        
+        # Calculate any new earnings
+        start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
+        end_time = datetime.now()
+        coins = self.get_coin_data(start_time, end_time)
+        
+        # Only count mining rewards (≤ 30 QUIL)
+        new_earnings = sum(coin['amount'] for coin in coins if coin['amount'] <= 30)
+        
+        # Add to running total and save
+        total_earnings = current_earnings + new_earnings
+        if 'daily_earnings' not in self.history:
+            self.history['daily_earnings'] = {}
+        self.history['daily_earnings'][today] = total_earnings
+        self._save_history()
+        
+        return total_earnings
             
     def get_coin_data(self, start_time, end_time):
         """Get fresh coin data from the node"""
