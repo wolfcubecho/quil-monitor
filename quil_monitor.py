@@ -329,46 +329,48 @@ class QuilNodeMonitor:
     def get_processing_metrics(self, date=None):
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
+            
+        today = datetime.now().strftime('%Y-%m-%d')
         
+        # For historical dates, just return cached data
+        if date != today:
+            if date in self.history.get('processing_metrics', {}):
+                return self.history['processing_metrics'][date]
+        
+        # For today's metrics
         metrics = ProcessingMetrics()
-        start_time = f"{date} 00:00:00"
-        end_time = f"{date} 23:59:59"
+        
+        # Single journalctl query for today's logs
+        cmd = f'journalctl -u ceremonyclient.service --since "{date} 00:00:00" --until "{date} 23:59:59" --no-hostname -o cat | grep -E "creating data shard ring proof|submitting data proof"'
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        
+        creation_data = {}
+        for line in result.stdout.splitlines():
+            try:
+                if "creating data shard ring proof" in line:
+                    data = json.loads(line)
+                    frame_number = data.get('frame_number')
+                    frame_age = float(data.get('frame_age', 0))
+                    creation_data[frame_number] = {'age': frame_age}
+                    metrics.add_creation(frame_age)
+                elif "submitting data proof" in line:
+                    data = json.loads(line)
+                    frame_number = data.get('frame_number')
+                    frame_age = float(data.get('frame_age', 0))
+                    if frame_number in creation_data:
+                        cpu_time = frame_age - creation_data[frame_number]['age']
+                        metrics.add_cpu_time(cpu_time)
+                    metrics.add_submission(frame_age)
+            except:
+                continue
 
-        try:
-            cmd = f'journalctl -u ceremonyclient.service --since "{start_time}" --until "{end_time}" --no-hostname -o cat | grep -E "creating data shard ring proof|submitting data proof"'
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-            
-            creation_data = {}
-            for line in result.stdout.splitlines():
-                try:
-                    if "creating data shard ring proof" in line:
-                        data = json.loads(line)
-                        frame_number = data.get('frame_number')
-                        frame_age = float(data.get('frame_age', 0))
-                        creation_data[frame_number] = {'age': frame_age}
-                        metrics.add_creation(frame_age)
-                    elif "submitting data proof" in line:
-                        data = json.loads(line)
-                        frame_number = data.get('frame_number')
-                        frame_age = float(data.get('frame_age', 0))
-                        if frame_number in creation_data:
-                            cpu_time = frame_age - creation_data[frame_number]['age']
-                            metrics.add_cpu_time(cpu_time)
-                        metrics.add_submission(frame_age)
-                except:
-                    continue
-
-            return metrics.get_stats()
-            
-        except Exception as e:
-            print(f"Error getting processing metrics: {e}")
-            return {
-                'creation': {'total': 0, 'avg_time': 0},
-                'submission': {'total': 0, 'avg_time': 0},
-                'cpu': {'total': 0, 'avg_time': 0}
-            }
+        stats = metrics.get_stats()
+        if date == today:
+            self.history['processing_metrics'][date] = stats
+        return stats
 
     def get_coin_data(self, start_time, end_time):
+        """Just get coins, no caching or processing"""
         result = subprocess.run(
             [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
             capture_output=True, text=True,
@@ -391,39 +393,38 @@ class QuilNodeMonitor:
                         timestamp = datetime.strptime(timestamp_str, '%Y-%m-%dT%H:%M:%SZ')
                         if start_time <= timestamp <= end_time:
                             amount = float(amount_match.group(1))
-                            if amount <= 30:  # Only track mining rewards
+                            if amount <= 30:
                                 coins.append({
                                     'amount': amount,
                                     'frame': int(frame_match.group(1))
                                 })
             except:
                 continue
-
         return coins
 
     def get_daily_earnings(self, date):
         today = datetime.now().strftime('%Y-%m-%d')
         
-        # For historical dates, just return stored value (default to 0 if not found)
+        # Return cached data for historical dates
         if date != today:
             return self.history.get('daily_earnings', {}).get(date, 0)
         
-        # For today, get stored earnings so far (default to 0)
+        # For today, get stored earnings + any new ones
         current_earnings = self.history.get('daily_earnings', {}).get(today, 0)
         
-        # Calculate any new earnings
         start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
         end_time = datetime.now()
         coins = self.get_coin_data(start_time, end_time)
         
-        new_earnings = sum(coin['amount'] for coin in coins)
-        total_earnings = current_earnings + new_earnings
+        total_earnings = current_earnings + sum(coin['amount'] for coin in coins)
         
-        # Only update if earnings changed
-        if total_earnings != current_earnings:
-            self.update_history('daily_earnings', today, total_earnings)
+        # Store today's total
+        if 'daily_earnings' not in self.history:
+            self.history['daily_earnings'] = {}
+        self.history['daily_earnings'][today] = total_earnings
         
         return total_earnings
+
 
     def get_earnings_history(self, days=7):
         earnings_data = []
@@ -439,38 +440,37 @@ class QuilNodeMonitor:
     def calculate_landing_rate(self, date=None):
         if date is None:
             date = datetime.now().strftime('%Y-%m-%d')
-                
+            
         today = datetime.now().strftime('%Y-%m-%d')
-             
-        # For historical dates, return stored rate
+        
+        # Return cached data for historical dates
         if date != today:
             return self.history.get('landing_rates', {}).get(date, {'rate': 0, 'transactions': 0, 'frames': 0})
-            
-            # Calculate fresh for today
+        
         metrics = self.get_processing_metrics(date)
         total_frames = metrics['creation']['total'] if metrics else 0
-            
+        
         if total_frames == 0:
             return {'rate': 0, 'transactions': 0, 'frames': 0}
-            
+        
         start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
         end_time = datetime.now()
         coins = self.get_coin_data(start_time, end_time)
-            
+        
         transactions = len(coins)
         landing_rate = min((transactions / total_frames * 100), 100)
-            
+        
         result = {
             'rate': landing_rate,
             'transactions': transactions,
             'frames': total_frames
         }
-            
-            # Update only if values changed
-        current = self.history.get('landing_rates', {}).get(today, {})
-        if current != result:
-            self.update_history('landing_rates', today, result)
-            
+        
+        # Store today's result
+        if 'landing_rates' not in self.history:
+            self.history['landing_rates'] = {}
+        self.history['landing_rates'][date] = result
+        
         return result
 
     def check_daily_report_time(self):
@@ -505,17 +505,14 @@ class QuilNodeMonitor:
         node_info = self.get_node_info()
         quil_price = self.get_quil_price()
         
-        # Calculate earnings data and averages
         today = current_time.strftime('%Y-%m-%d')
-        today_earnings = self.get_daily_earnings(today) or 0  # Default to 0 if None
+        today_earnings = self.get_daily_earnings(today)
         today_metrics = self.get_processing_metrics(today)
         today_landing = self.calculate_landing_rate(today)
         
         if node_info:
             earnings_data = self.get_earnings_history(7)
-            # Filter out any None values and ensure we have valid earnings
-            valid_earnings = [earn for _, earn in earnings_data if earn is not None]
-            daily_avg = sum(valid_earnings) / len(valid_earnings) if valid_earnings else 0
+            daily_avg = sum(earning for _, earning in earnings_data) / len(earnings_data) if earnings_data else 0
             weekly_avg = daily_avg * 7
             monthly_avg = daily_avg * 30
             
@@ -530,48 +527,47 @@ class QuilNodeMonitor:
             print(f"Weekly Average:  {weekly_avg:.6f} QUIL // ${weekly_avg * quil_price:.2f}")
             print(f"Monthly Average: {monthly_avg:.6f} QUIL // ${monthly_avg * quil_price:.2f}")
 
-            print(f"\nToday's Stats ({today}):")
-            print(f"Earnings:        {today_earnings:.6f} QUIL // ${today_earnings * quil_price:.2f}")
-            print(f"Landing Rate:    {today_landing['rate']:.2f}% ({today_landing['transactions']}/{today_landing['frames']} frames)")
+        print(f"\nToday's Stats ({today}):")
+        print(f"Earnings:        {today_earnings:.6f} QUIL // ${today_earnings * quil_price:.2f}")
+        print(f"Landing Rate:    {today_landing['rate']:.2f}% ({today_landing['transactions']}/{today_landing['frames']} frames)")
+        
+        print("\nProcessing Analysis:")
+        self.display_processing_section("Creation Stage (Network Latency)", 
+                                     today_metrics['creation'], 
+                                     THRESHOLDS['creation'])
+        self.display_processing_section("Submission Stage (Total Time)", 
+                                     today_metrics['submission'], 
+                                     THRESHOLDS['submission'])
+        self.display_processing_section("CPU Processing Time", 
+                                     today_metrics['cpu'], 
+                                     THRESHOLDS['cpu'])
+
+        print("\nHistory (Last 7 Days):")
+        for date, earnings in earnings_data:
+            metrics = self.history.get('processing_metrics', {}).get(date, {})
+            landing_data = self.history.get('landing_rates', {}).get(date, {})
+            cpu_info = metrics.get('cpu', {})
+            avg_cpu = cpu_info.get('avg_time', 0)
             
-            print("\nProcessing Analysis:")
-            self.display_processing_section("Creation Stage (Network Latency)", 
-                                         today_metrics['creation'], 
-                                         THRESHOLDS['creation'])
-            self.display_processing_section("Submission Stage (Total Time)", 
-                                         today_metrics['submission'], 
-                                         THRESHOLDS['submission'])
-            self.display_processing_section("CPU Processing Time", 
-                                         today_metrics['cpu'], 
-                                         THRESHOLDS['cpu'])
+            print(f"{date}: {earnings:.6f} QUIL // ${earnings * quil_price:.2f} "
+                  f"(Landing Rate: {landing_data.get('rate', 0):.2f}%, "
+                  f"{landing_data.get('transactions', 0)}/{landing_data.get('frames', 0)} frames, "
+                  f"Avg Process: {avg_cpu:.2f}s)")
 
-            print("\nHistory (Last 7 Days):")
-            for date, earnings in earnings_data:
-                if earnings is not None:  # Only display valid earnings
-                    metrics = self.get_processing_metrics(date)
-                    landing_data = self.calculate_landing_rate(date)
-                    cpu_info = metrics.get('cpu', {})
-                    avg_cpu = cpu_info.get('avg_time', 0)
-                    
-                    print(f"{date}: {earnings:.6f} QUIL // ${earnings * quil_price:.2f} "
-                          f"(Landing Rate: {landing_data['rate']:.2f}%, "
-                          f"{landing_data['transactions']}/{landing_data['frames']} frames, "
-                          f"Avg Process: {avg_cpu:.2f}s)")
+        # SINGLE history save at the end
+        self._save_history()
 
-            # Check for daily report
-            if self.check_daily_report_time():
-                self.telegram.send_daily_summary(
-                    balance=node_info['total'],
-                    earnings=today_earnings,
-                    avg_earnings=daily_avg,
-                    metrics=today_metrics,
-                    quil_price=quil_price,
-                    landing_rate=today_landing
-                )
-
-            # Save history once at the end if it changed
-            self._save_history()
-
+        # Check for daily report
+        if self.check_daily_report_time():
+            self.telegram.send_daily_summary(
+                balance=node_info['total'],
+                earnings=today_earnings,
+                avg_earnings=daily_avg,
+                metrics=today_metrics,
+                quil_price=quil_price,
+                landing_rate=today_landing
+            )
+            
     def display_processing_section(self, title, stats, thresholds):
         print(f"\n{title}:")
         print(f"  Total Proofs:    {stats['total']}")
