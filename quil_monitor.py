@@ -315,7 +315,7 @@ class QuilNodeMonitor:
             date = datetime.now().strftime('%Y-%m-%d')
             self.update_history('daily_balance', date, owned_balance)
 
-                return {
+            return {
                     'ring': ring,
                     'active_workers': active_workers,
                     'owned': owned_balance,
