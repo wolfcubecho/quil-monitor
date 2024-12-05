@@ -205,7 +205,7 @@ class QuilNodeMonitor:
                 except Exception as e:
                     print(f"Error loading history (will start fresh): {e}")
 
-   def _save_history(self):
+    def _save_history(self):
             try:
                 with open(self.log_file, 'w') as f:
                     json.dump(self.history, f, indent=2)
