@@ -411,7 +411,7 @@ class QuilNodeMonitor:
                     # Update history with the new data
                     today = current_time.strftime('%Y-%m-%d')
                     self.history['coin_data'] = {
-                        date: [
+                        date: {
                         today: [
                             {
                                 'amount': coin['amount'],
@@ -428,7 +428,7 @@ class QuilNodeMonitor:
                             for coin in self.coin_cache 
                             if isinstance(coin.get('timestamp'), datetime)
                         )
-                        ]}
+                        }
                     self.history['last_coin_update'] = current_time.strftime('%Y-%m-%dT%H:%M:%SZ')
                     self._save_history()
 
