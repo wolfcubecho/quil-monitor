@@ -403,27 +403,27 @@ class QuilNodeMonitor:
 
     def get_daily_earnings(self, date):
         today = datetime.now().strftime('%Y-%m-%d')
-            
-        # For historical dates, just return stored value
+        
+        # For historical dates, just return stored value (default to 0 if not found)
         if date != today:
             return self.history.get('daily_earnings', {}).get(date, 0)
-            
-            # For today, get stored earnings so far
-            current_earnings = self.history.get('daily_earnings', {}).get(today, 0)
-            
-            # Calculate any new earnings
-            start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
-            end_time = datetime.now()
-            coins = self.get_coin_data(start_time, end_time)
-            
-            new_earnings = sum(coin['amount'] for coin in coins)
-            total_earnings = current_earnings + new_earnings
-            
-            # Only update if earnings changed
-            if total_earnings != current_earnings:
-                self.update_history('daily_earnings', today, total_earnings)
-            
-            return total_earnings
+        
+        # For today, get stored earnings so far (default to 0)
+        current_earnings = self.history.get('daily_earnings', {}).get(today, 0)
+        
+        # Calculate any new earnings
+        start_time = datetime.strptime(f"{date} 00:00:00", '%Y-%m-%d %H:%M:%S')
+        end_time = datetime.now()
+        coins = self.get_coin_data(start_time, end_time)
+        
+        new_earnings = sum(coin['amount'] for coin in coins)
+        total_earnings = current_earnings + new_earnings
+        
+        # Only update if earnings changed
+        if total_earnings != current_earnings:
+            self.update_history('daily_earnings', today, total_earnings)
+        
+        return total_earnings
 
     def get_earnings_history(self, days=7):
         earnings_data = []
