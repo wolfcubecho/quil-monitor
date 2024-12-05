@@ -512,12 +512,12 @@ class QuilNodeMonitor:
             # Get coins for this date from cache
             coins = self.get_coin_data(start_time, end_time)
             if not coins:
-            # Get coins for this date
-            result = subprocess.run(
-                [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
-                capture_output=True, text=True,
-                encoding='utf-8'
-            )
+                # Get coins for this date
+                result = subprocess.run(
+                    [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
+                    capture_output=True, text=True,
+                    encoding='utf-8'
+                )
             if result.returncode != 0:
                 # If we have historical data for this date, use it
                 if date in self.history.get('daily_earnings', {}):
