@@ -115,7 +115,7 @@ class ProcessingMetrics:
             'avg_time': sum(times)/total if total > 0 else 0
         }
         
-    def get_stats(self):
+     def get_stats(self):
         return {
             'creation': self.calculate_stats(self.creation_times, THRESHOLDS['creation']),
             'submission': self.calculate_stats(self.submission_times, THRESHOLDS['submission']),
@@ -123,7 +123,7 @@ class ProcessingMetrics:
             'landing_rate': self.calculate_landing_rate()
         }
     
-    def calculate_landing_rate(self):
+     def calculate_landing_rate(self):
         total_frames = len(self.frames)
         if total_frames == 0:
             return {'rate': 0, 'transactions': 0, 'frames': 0}
