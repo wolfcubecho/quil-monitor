@@ -267,7 +267,7 @@ class QuilNodeMonitor:
             'daily_balance': {}
         }
 
-   def _save_history(self):
+    def _save_history(self):
         with open(self.history_file, 'w') as f:
             json.dump(self.history, f, indent=2)
 
