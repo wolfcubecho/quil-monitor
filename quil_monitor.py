@@ -215,8 +215,8 @@ class QuilNodeMonitor:
         self.history_file = "quil_history.json"
         self.history = self._load_history()
         self.metrics = ProcessingMetrics()
-        self.node_binary = self._get_latest_binary('node')
-        self.qclient_binary = self._get_latest_binary('qclient')
+        self.node_binary = self._get_latest_node_binary()
+        self.qclient_binary = self._get_latest_qclient_binary()
         self.telegram = TelegramNotifier(TELEGRAM_CONFIG)
 
     def _get_latest_node_binary(self):
@@ -250,7 +250,7 @@ class QuilNodeMonitor:
         except Exception as e:
             print(f"Error finding qclient binary: {e}")
             sys.exit(1)
-
+            
     def _load_history(self):
         if os.path.exists(self.history_file):
             try:
