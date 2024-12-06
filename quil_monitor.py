@@ -50,18 +50,20 @@ class QuilNodeMonitor:
         return result.stdout.strip()
 
     def _load_history(self):
-        if os.path.exists(self.history_file):
-            try:
+        """Load history with better error handling"""
+        try:
+            if os.path.exists(self.history_file):
                 with open(self.history_file, 'r') as f:
                     data = json.load(f)
-                    # Ensure all required keys exist
+                    # Convert any string data to proper dict
                     for key in ['daily_metrics', 'daily_earnings', 'landing_rates', 'daily_balance']:
-                        if key not in data:
+                        if key not in data or not isinstance(data[key], dict):
                             data[key] = {}
                     return data
-            except:
-                return self._init_history()
+        except:
+            pass
         return self._init_history()
+
         
     def _init_history(self):
         return {
@@ -72,17 +74,25 @@ class QuilNodeMonitor:
         }
 
     def _save_history(self):
-        try:
-            # Keep only last 30 days
-            cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
-            for key in self.history:
-                self.history[key] = {k: v for k, v in self.history[key].items() 
-                                   if k >= cutoff}
-            
-            with open(self.history_file, 'w') as f:
-                json.dump(self.history, f, indent=2)
-        except Exception as e:
-            print(f"Error saving history: {e}")
+    try:
+        # Only clean up if we have actual dictionary data
+        cleaned_history = {}
+        cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+        
+        for section in ['daily_metrics', 'daily_earnings', 'landing_rates', 'daily_balance']:
+            if section in self.history and isinstance(self.history[section], dict):
+                cleaned_history[section] = {
+                    k: v for k, v in self.history[section].items() 
+                    if isinstance(k, str) and k >= cutoff
+                }
+            else:
+                cleaned_history[section] = {}
+        
+        self.history = cleaned_history
+        with open(self.history_file, 'w') as f:
+            json.dump(self.history, f, indent=2)
+    except Exception as e:
+        print(f"Error saving history: {e}")
 
     def get_node_info(self):
         result = subprocess.run([self.node_binary, '--node-info'], 
@@ -148,30 +158,39 @@ class QuilNodeMonitor:
         }
 
     def get_coin_data(self):
-        """Get coin transactions since midnight"""
+        """Get coin transactions since midnight with better error handling"""
         today = datetime.now().strftime('%Y-%m-%d')
-        result = subprocess.run(
-            [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
-            capture_output=True, text=True
-        )
+        cmd = f"{self.qclient_binary} token coins metadata --public-rpc"
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         
         coins = 0
         earnings = 0
-        for line in result.stdout.splitlines():
-            if 'Timestamp' in line and today in line and 'QUIL' in line:
-                amount_match = re.search(r'([\d.]+)\s*QUIL', line)
-                if amount_match:
-                    amount = float(amount_match.group(1))
-                    if amount <= 30:  # Only count mining rewards
-                        coins += 1
-                        earnings += amount
-
-        self.history['daily_earnings'][today] = earnings
-        self._save_history()
+        
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                try:
+                    if 'Timestamp' in line and today in line and 'QUIL' in line:
+                        amount_match = re.search(r'([\d.]+)\s*QUIL', line)
+                        timestamp_match = re.search(r'Timestamp\s*([\d-]+T[\d:]+Z)', line)
+                        
+                        if amount_match and timestamp_match:
+                            timestamp = datetime.strptime(timestamp_match.group(1), '%Y-%m-%dT%H:%M:%SZ')
+                            if timestamp.strftime('%Y-%m-%d') == today:
+                                amount = float(amount_match.group(1))
+                                if amount <= 30:  # Only count mining rewards
+                                    coins += 1
+                                    earnings += amount
+                except Exception as e:
+                    continue
+    
+        if earnings > 0:  # Only save if we found earnings
+            self.history['daily_earnings'][today] = earnings
+            self._save_history()
+        
         return coins, earnings
-
+        
     def process_logs(self):
-        """Process logs using single journalctl command"""
+        """Process logs with better accuracy"""
         cmd = """journalctl -u ceremonyclient.service --since today --no-hostname -o json | grep -E 'creating data shard ring proof|submitting data proof'"""
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         
@@ -186,23 +205,24 @@ class QuilNodeMonitor:
             try:
                 data = json.loads(line)
                 msg = json.loads(data.get('MESSAGE', '{}'))
-                frame_number = msg.get('frame_number')
+                frame_number = int(msg.get('frame_number', 0))  # Ensure integer
                 frame_age = float(msg.get('frame_age', 0))
                 
-                if "creating data shard ring proof" in data.get('MESSAGE', ''):
-                    creation_times.append(frame_age)
-                    creation_data[frame_number] = frame_age
-                    frames.add(frame_number)
-                elif "submitting data proof" in data.get('MESSAGE', ''):
-                    submission_times.append(frame_age)
-                    transactions.add(frame_number)
-                    if frame_number in creation_data:
-                        cpu_time = frame_age - creation_data[frame_number]
-                        if cpu_time > 0:
-                            cpu_times.append(cpu_time)
+                if frame_number > 0 and frame_age > 0:  # Valid data only
+                    if "creating data shard ring proof" in data.get('MESSAGE', ''):
+                        creation_times.append(frame_age)
+                        creation_data[frame_number] = frame_age
+                        frames.add(frame_number)
+                    elif "submitting data proof" in data.get('MESSAGE', ''):
+                        submission_times.append(frame_age)
+                        transactions.add(frame_number)
+                        if frame_number in creation_data:
+                            cpu_time = frame_age - creation_data[frame_number]
+                            if cpu_time > 0:
+                                cpu_times.append(cpu_time)
             except:
                 continue
-
+    
         metrics = {
             'creation': self.calculate_stats(creation_times, THRESHOLDS['creation']),
             'submission': self.calculate_stats(submission_times, THRESHOLDS['submission']),
@@ -210,31 +230,43 @@ class QuilNodeMonitor:
             'frames': len(frames),
             'submitted': len(transactions)
         }
-
-        today = datetime.now().strftime('%Y-%m-%d')
-        self.history['daily_metrics'][today] = metrics
-        self._save_history()
+    
+        # Store metrics only if we have data
+        if frames:
+            today = datetime.now().strftime('%Y-%m-%d')
+            self.history['daily_metrics'][today] = metrics
+            self._save_history()
+    
         return metrics
 
     def get_earnings_history(self, days=7):
-        """Get earnings history with landing rates"""
+        """Get history with proper earnings calculation"""
         history_data = []
         today = datetime.now().date()
         
         for i in range(days):
             date = (today - timedelta(days=i)).strftime('%Y-%m-%d')
-            earnings = self.history['daily_earnings'].get(date, 0)
-            landing = self.history['landing_rates'].get(date, {'rate': 0, 'coins': 0, 'frames': 0})
+            # Get earnings and ensure it's a float
+            earnings = float(self.history.get('daily_earnings', {}).get(date, 0))
+            # Get landing data with proper defaults
+            landing = self.history.get('landing_rates', {}).get(date, {
+                'rate': 0,
+                'coins': 0,
+                'frames': 0
+            })
+            if isinstance(landing, (int, float)):  # Fix for old history format
+                landing = {'rate': float(landing), 'coins': 0, 'frames': 0}
             history_data.append((date, earnings, landing))
         
         return history_data
 
     def display_stats(self):
+        """Display stats with better average calculation"""
         node_info = self.get_node_info()
         if not node_info:
             print("Failed to get node info")
             return
-
+    
         metrics = self.process_logs()
         quil_price = self.get_quil_price()
         coins, earnings = self.get_coin_data()
@@ -242,20 +274,25 @@ class QuilNodeMonitor:
         # Calculate landing rate from actual coins
         landing_rate = (coins / metrics['frames'] * 100) if metrics['frames'] > 0 else 0
         
-        # Store landing rate
+        # Store landing rate only if we have frames
         today = datetime.now().strftime('%Y-%m-%d')
-        self.history['landing_rates'][today] = {
-            'rate': landing_rate,
-            'coins': coins,
-            'frames': metrics['frames']
-        }
-
-        # Get history and calculate averages
+        if metrics['frames'] > 0:
+            self.history['landing_rates'][today] = {
+                'rate': landing_rate,
+                'coins': coins,
+                'frames': metrics['frames']
+            }
+    
+        # Get history and calculate averages only from days with earnings
         history = self.get_earnings_history(7)
         valid_earnings = [earn for _, earn, _ in history if earn > 0]
-        daily_avg = sum(valid_earnings) / len(valid_earnings) if valid_earnings else 0
-        weekly_avg = daily_avg * 7
-        monthly_avg = daily_avg * 30
+        
+        if valid_earnings:
+            daily_avg = sum(valid_earnings) / len(valid_earnings)
+            weekly_avg = daily_avg * 7
+            monthly_avg = daily_avg * 30
+        else:
+            daily_avg = weekly_avg = monthly_avg = 0
 
         print("\n=== QUIL Node Statistics ===")
         print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
