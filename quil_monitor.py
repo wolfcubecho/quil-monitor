@@ -62,14 +62,14 @@ class QuilNodeMonitor:
                 return self._init_history()
         return self._init_history()
         
-   def _init_history(self):
-    return {
-        'daily_metrics': {},
-        'daily_earnings': {},
-        'daily_balance': {},
-        'landing_rates': {},
-        'daily_totals': {}  # For storing combined daily stats
-    }
+    def _init_history(self):
+        return {
+            'daily_metrics': {},
+            'daily_earnings': {},
+            'daily_balance': {},
+            'landing_rates': {},
+            'daily_totals': {}  # For storing combined daily stats
+        }
 
     def _save_history(self):
         with open(self.history_file, 'w') as f:
