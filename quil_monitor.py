@@ -81,12 +81,12 @@ class ProcessingMetrics:
             self.creation_times_by_frame = {}
             # Keep last_processed_time to ensure no logs are missed
             
-    def calculate_cpu_time(self, frame_number, submission_age, creation_age):
+     def calculate_cpu_time(self, frame_number, submission_age, creation_age):
         cpu_time = submission_age - creation_age
         if cpu_time > 0:
             self.cpu_times.append(cpu_time)
         
-    def calculate_stats(self, times, thresholds):
+     def calculate_stats(self, times, thresholds):
         if not times:
             return {
                 'total': 0,
