@@ -158,9 +158,13 @@ class QuilNodeMonitor:
         }
 
     def get_coin_data(self):
-        """Get coin transactions since midnight with better error handling"""
+        """Get coin transactions since midnight"""
         today = datetime.now().strftime('%Y-%m-%d')
-        cmd = f"{self.qclient_binary} token coins metadata --public-rpc"
+        home = os.path.expanduser('~')
+        config = f"{home}/ceremonyclient/node/.config"
+        
+        # Use proper flags like the bash script
+        cmd = f"{self.qclient_binary} token coins metadata --config {config} --public-rpc"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         
         coins = 0
@@ -169,7 +173,7 @@ class QuilNodeMonitor:
         if result.returncode == 0:
             for line in result.stdout.splitlines():
                 try:
-                    if 'Timestamp' in line and today in line and 'QUIL' in line:
+                    if 'QUIL' in line and 'Timestamp' in line:
                         amount_match = re.search(r'([\d.]+)\s*QUIL', line)
                         timestamp_match = re.search(r'Timestamp\s*([\d-]+T[\d:]+Z)', line)
                         
@@ -183,7 +187,7 @@ class QuilNodeMonitor:
                 except Exception as e:
                     continue
     
-        if earnings > 0:  # Only save if we found earnings
+        if earnings > 0:
             self.history['daily_earnings'][today] = earnings
             self._save_history()
         
