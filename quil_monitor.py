@@ -332,46 +332,32 @@ class QuilNodeMonitor:
         return total_earnings
 
     def process_logs(self):
-        """Process logs efficiently using journalctl's JSON output"""
-        last_timestamp = self.history.get('last_log_timestamp')
-        since_param = f"--since '{last_timestamp}'" if last_timestamp else ""
-        
-        cmd = f'journalctl -u ceremonyclient.service {since_param} --no-hostname -o json | grep -E "creating data shard ring proof|submitting data proof"'
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        
-        creation_data = {}
-        latest_timestamp = last_timestamp
-        
-        for line in result.stdout.splitlines():
-            try:
-                entry = json.loads(line)
-                timestamp = entry.get('__REALTIME_TIMESTAMP')
-                if timestamp:
-                    latest_timestamp = max(latest_timestamp, timestamp) if latest_timestamp else timestamp
-                
-                msg = entry.get('MESSAGE', '')
-                if "creating data shard ring proof" in msg:
-                    data = json.loads(msg)
-                    frame_number = data.get('frame_number')
-                    frame_age = float(data.get('frame_age', 0))
-                    creation_data[frame_number] = frame_age
-                    self.metrics.add_metrics(frame_number, creation_time=frame_age)
-                    
-                elif "submitting data proof" in msg:
-                    data = json.loads(msg)
-                    frame_number = data.get('frame_number')
-                    frame_age = float(data.get('frame_age', 0))
-                    if frame_number in creation_data:
-                        self.metrics.calculate_cpu_time(
-                            frame_number, frame_age, creation_data[frame_number]
-                        )
-                    self.metrics.add_metrics(frame_number, submission_time=frame_age)
-            except:
-                continue
-        
-        if latest_timestamp:
-            self.history['last_log_timestamp'] = latest_timestamp
-            self._save_history()
+    """Only process today's logs"""
+    today = datetime.now().strftime('%Y-%m-%d')
+    cmd = f'journalctl -u ceremonyclient.service --since "today" --no-hostname -o json | grep -E "creating data shard ring proof|submitting data proof"'
+    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    
+    creation_data = {}
+    for line in result.stdout.splitlines():
+        try:
+            data = json.loads(line)
+            msg = data.get('MESSAGE', '')
+            if "creating data shard ring proof" in msg:
+                msg_data = json.loads(msg)
+                frame_number = msg_data.get('frame_number')
+                frame_age = float(msg_data.get('frame_age', 0))
+                creation_data[frame_number] = frame_age
+                self.metrics.add_creation(frame_age)
+            elif "submitting data proof" in msg:
+                msg_data = json.loads(msg)
+                frame_number = msg_data.get('frame_number')
+                frame_age = float(msg_data.get('frame_age', 0))
+                if frame_number in creation_data:
+                    cpu_time = frame_age - creation_data[frame_number]
+                    self.metrics.add_cpu_time(cpu_time)
+                self.metrics.add_submission(frame_age)
+        except:
+            continue
 
     def get_earnings_history(self, days=7):
         earnings_data = []
@@ -436,64 +422,59 @@ class QuilNodeMonitor:
             print(f"Error exporting CSV: {e}")
 
     def display_stats(self):
-        # Get core data
-        node_info = self.get_node_info()
-        if not node_info:
-            print("Failed to get node info")
-            return
+    node_info = self.get_node_info()
+    if not node_info:
+        print("Failed to get node info")
+        return
 
-        # Process new log data
-        self.process_logs()
-        
-        # Get metrics and other data
-        metrics = self.metrics.get_stats()
-        quil_price = self.get_quil_price()
-        today_earnings = self.get_coin_data()  # This updates daily earnings
-        earnings_data = self.get_earnings_history(7)
-        daily_avg = sum(earning for _, earning in earnings_data) / len(earnings_data) if earnings_data else 0
+    # Get core data
+    self.process_logs()
+    metrics = self.metrics.get_stats()
+    quil_price = self.get_quil_price()
+    today_earnings = self.get_coin_data()
+    earnings_data = self.get_earnings_history(7)
+    
+    # Calculate averages properly
+    daily_avg = sum(earning for _, earning in earnings_data) / len(earnings_data) if earnings_data else 0
+    weekly_avg = daily_avg * 7
+    monthly_avg = daily_avg * 30
 
-        print("\n=== QUIL Node Statistics ===")
-        current_time = datetime.now()
-        print(f"Time: {current_time.strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        print(f"\nNode Information:")
-        print(f"Ring: {node_info['ring']}")
-        print(f"Active Workers: {node_info['active_workers']}")
-        print(f"Seniority: {node_info['seniority']}")
-        print(f"QUIL Price: ${quil_price:.4f}")
-        print(f"Balance: {node_info['owned_balance']:.6f} QUIL (${node_info['owned_balance'] * quil_price:.2f})")
-        
-        print(f"\nEarnings:")
-        print(f"Daily Average: {daily_avg:.6f} QUIL (${daily_avg * quil_price:.2f})")
-        print(f"Today's Earnings: {today_earnings:.6f} QUIL (${today_earnings * quil_price:.2f})")
-        
-        print(f"\nCurrent Performance:")
-        landing_rate = metrics['landing_rate']
-        print(f"Landing Rate: {landing_rate['rate']:.2f}% "
-              f"({landing_rate['transactions']}/{landing_rate['frames']} frames)")
-        
-        self.display_processing_section("Creation Stage (Network Latency)", 
-                                     metrics['creation'], 
-                                     THRESHOLDS['creation'])
-        self.display_processing_section("Submission Stage (Total Time)", 
-                                     metrics['submission'], 
-                                     THRESHOLDS['submission'])
-        self.display_processing_section("CPU Processing Time", 
-                                     metrics['cpu'], 
-                                     THRESHOLDS['cpu'])
-        
-        print("\nHistory (Last 7 Days):")
-        for date, earnings in earnings_data:
-            print(f"{date}: {earnings:.6f} QUIL (${earnings * quil_price:.2f})")
+    print("\n=== QUIL Node Statistics ===")
+    print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    print(f"\nNode Information:")
+    print(f"Ring: {int(node_info['ring'])}")
+    print(f"Active Workers: {int(node_info['active_workers'])}")
+    print(f"Seniority: {int(node_info['seniority'])}")
+    print(f"QUIL Price: ${quil_price:.4f}")
+    print(f"Balance: {node_info['owned_balance']:.6f} QUIL (${node_info['owned_balance'] * quil_price:.2f})")
+    
+    print(f"\nEarnings Averages:")
+    print(f"Daily Average:   {daily_avg:.6f} QUIL // ${daily_avg * quil_price:.2f}")
+    print(f"Weekly Average:  {weekly_avg:.6f} QUIL // ${weekly_avg * quil_price:.2f}")
+    print(f"Monthly Average: {monthly_avg:.6f} QUIL // ${monthly_avg * quil_price:.2f}")
+    
+    print(f"\nToday's Earnings: {today_earnings:.6f} QUIL // ${today_earnings * quil_price:.2f}")
+    
+    print(f"\nCurrent Performance:")
+    landing_rate = metrics['landing_rate']
+    print(f"Landing Rate: {landing_rate['rate']:.2f}% ({landing_rate['transactions']}/{landing_rate['frames']} frames)")
 
-        if self.check_daily_report_time():
-            self.telegram.send_daily_summary(
-                node_info=node_info,
-                metrics=metrics,
-                quil_price=quil_price,
-                daily_earnings=today_earnings,
-                avg_earnings=daily_avg
-            )
+    self.display_processing_section("Creation Stage (Network Latency)", 
+                                 metrics['creation'], 
+                                 THRESHOLDS['creation'])
+    self.display_processing_section("Submission Stage (Total Time)", 
+                                 metrics['submission'], 
+                                 THRESHOLDS['submission'])
+    self.display_processing_section("CPU Processing Time", 
+                                 metrics['cpu'], 
+                                 THRESHOLDS['cpu'])
+
+    print("\nHistory (Last 7 Days):")
+    for date, earnings in earnings_data:
+        rate_data = self.history.get('landing_rates', {}).get(date, {})
+        print(f"{date}: {earnings:.6f} QUIL // ${earnings * quil_price:.2f} "
+              f"(Landing Rate: {rate_data.get('rate', 0):.2f}%)")
 
 def setup_telegram():
     print("\nTelegram Bot Setup:")
