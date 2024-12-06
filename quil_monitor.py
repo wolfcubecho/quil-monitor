@@ -74,25 +74,25 @@ class QuilNodeMonitor:
         }
 
     def _save_history(self):
-    try:
-        # Only clean up if we have actual dictionary data
-        cleaned_history = {}
-        cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
-        
-        for section in ['daily_metrics', 'daily_earnings', 'landing_rates', 'daily_balance']:
-            if section in self.history and isinstance(self.history[section], dict):
-                cleaned_history[section] = {
-                    k: v for k, v in self.history[section].items() 
-                    if isinstance(k, str) and k >= cutoff
-                }
-            else:
-                cleaned_history[section] = {}
-        
-        self.history = cleaned_history
-        with open(self.history_file, 'w') as f:
-            json.dump(self.history, f, indent=2)
-    except Exception as e:
-        print(f"Error saving history: {e}")
+        try:
+            # Only clean up if we have actual dictionary data
+            cleaned_history = {}
+            cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+            
+            for section in ['daily_metrics', 'daily_earnings', 'landing_rates', 'daily_balance']:
+                if section in self.history and isinstance(self.history[section], dict):
+                    cleaned_history[section] = {
+                        k: v for k, v in self.history[section].items() 
+                        if isinstance(k, str) and k >= cutoff
+                    }
+                else:
+                    cleaned_history[section] = {}
+            
+            self.history = cleaned_history
+            with open(self.history_file, 'w') as f:
+                json.dump(self.history, f, indent=2)
+        except Exception as e:
+            print(f"Error saving history: {e}")
 
     def get_node_info(self):
         result = subprocess.run([self.node_binary, '--node-info'], 
