@@ -70,7 +70,7 @@ class ProcessingMetrics:
             self.submission_times.append(submission_time)
             self.transactions.add(frame_number)
 
-    def reset_for_new_day(self, new_date):
+     def reset_for_new_day(self, new_date):
             """Reset metrics at midnight"""
             self.current_date = new_date
             self.creation_times = []
