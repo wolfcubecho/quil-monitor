@@ -161,10 +161,11 @@ class QuilNodeMonitor:
         """Get coin transactions since midnight"""
         today = datetime.now().strftime('%Y-%m-%d')
         home = os.path.expanduser('~')
-        config = f"{home}/ceremonyclient/node/.config"
+        config_dir = f"{home}/ceremonyclient/node/.config"
+        flags = f"--config {config_dir} --public-rpc"
         
-        # Use proper flags like the bash script
-        cmd = f"{self.qclient_binary} token coins metadata --config {config} --public-rpc"
+        # Match bash script's qclient command exactly
+        cmd = f"cd {home}/ceremonyclient/client && ./$(ls -1 qclient-* | sort -V | tail -n 1) token coins metadata {flags}"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
         
         coins = 0
@@ -184,11 +185,16 @@ class QuilNodeMonitor:
                                 if amount <= 30:  # Only count mining rewards
                                     coins += 1
                                     earnings += amount
-                except Exception as e:
+                except:
                     continue
     
         if earnings > 0:
             self.history['daily_earnings'][today] = earnings
+            self.history['landing_rates'][today] = {
+                'rate': (coins / metrics['frames'] * 100) if metrics['frames'] > 0 else 0,
+                'coins': coins,
+                'frames': metrics['frames'] if 'metrics' in locals() else 0
+            }
             self._save_history()
         
         return coins, earnings
