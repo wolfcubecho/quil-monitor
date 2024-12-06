@@ -279,6 +279,23 @@ class QuilNodeMonitor:
         
         return earnings_data
 
+    def _display_section(self, title, stats, thresholds):
+        """Display a metrics section with color coding"""
+        print(f"\n{title}:")
+        print(f"  Total Proofs:    {stats['total']}")
+        print(f"  Average Time:    {stats['avg_time']:.2f}s")
+        
+        good_color = COLORS['green'] if stats['good_pct'] > 50 else COLORS['reset']
+        warning_color = COLORS['yellow'] if stats['warning_pct'] > 50 else COLORS['reset']
+        critical_color = COLORS['red'] if stats['critical_pct'] > 50 else COLORS['reset']
+        
+        print(f"  0-{thresholds['good']}s:         "
+              f"{good_color}{stats['good']} proofs ({stats['good_pct']:.1f}%){COLORS['reset']}")
+        print(f"  {thresholds['good']}-{thresholds['warning']}s:     "
+              f"{warning_color}{stats['warning']} proofs ({stats['warning_pct']:.1f}%){COLORS['reset']}")
+        print(f"  >{thresholds['warning']}s:         "
+              f"{critical_color}{stats['critical']} proofs ({stats['critical_pct']:.1f}%){COLORS['reset']}")
+    
     def process_logs(self):
         """Process logs using fast text processing"""
         today = datetime.now().strftime('%Y-%m-%d')
