@@ -62,7 +62,7 @@ class ProcessingMetrics:
         self.frames = set()
         self.creation_times_by_frame = {}
         
-    def add_metrics(self, frame_number, creation_time=None, submission_time=None):
+     def add_metrics(self, frame_number, creation_time=None, submission_time=None):
         if creation_time is not None:
             self.creation_times.append(creation_time)
             self.frames.add(frame_number)
