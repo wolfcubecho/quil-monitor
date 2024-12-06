@@ -62,12 +62,23 @@ class QuilNodeMonitor:
         return {
             'daily_metrics': {},
             'daily_earnings': {},
-            'landing_rates': {}
+            'landing_rates': {},
+            'daily_balance': {}
         }
 
     def _save_history(self):
-        with open(self.history_file, 'w') as f:
-            json.dump(self.history, f, indent=2)
+        try:
+            # Keep only recent history (last 30 days)
+            cutoff = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
+            for key in ['daily_metrics', 'daily_earnings', 'landing_rates', 'daily_balance']:
+                if key in self.history:
+                    self.history[key] = {k: v for k, v in self.history[key].items() 
+                                       if k >= cutoff}
+            
+            with open(self.history_file, 'w') as f:
+                json.dump(self.history, f, indent=2)
+        except Exception as e:
+            print(f"Error saving history: {e}")
 
     def get_node_info(self):
         result = subprocess.run([self.node_binary, '--node-info'], 
@@ -88,6 +99,9 @@ class QuilNodeMonitor:
             value = float(match.group(1)) if match else 0
             info[key] = int(value) if key != 'owned_balance' else value
 
+        # Store balance in history
+        today = datetime.now().strftime('%Y-%m-%d')
+        self.history['daily_balance'][today] = info['owned_balance']
         return info
 
     def get_quil_price(self):
@@ -148,9 +162,24 @@ class QuilNodeMonitor:
                         coins += 1
                         earnings += amount
 
+        # Store in history
         self.history['daily_earnings'][today] = earnings
         self._save_history()
         return coins, earnings
+
+    def get_earnings_history(self, days=7):
+        """Get historical earnings with landing rates"""
+        history_data = []
+        today = datetime.now().date()
+    
+        for i in range(days):
+            date = (today - timedelta(days=i)).strftime('%Y-%m-%d')
+            earnings = self.history.get('daily_earnings', {}).get(date, 0)
+            landing = self.history.get('landing_rates', {}).get(date, {'rate': 0, 'coins': 0, 'frames': 0})
+            prev_balance = self.history.get('daily_balance', {}).get(date, 0)
+            history_data.append((date, earnings, landing, prev_balance))
+    
+        return history_data
 
     def process_logs(self):
         """Process logs using single journalctl command"""
@@ -185,13 +214,18 @@ class QuilNodeMonitor:
             except:
                 continue
 
-        return {
+        today = datetime.now().strftime('%Y-%m-%d')
+        metrics = {
             'creation': self.calculate_stats(creation_times, THRESHOLDS['creation']),
             'submission': self.calculate_stats(submission_times, THRESHOLDS['submission']),
             'cpu': self.calculate_stats(cpu_times, THRESHOLDS['cpu']),
             'frames': len(frames),
             'submitted': len(transactions)
         }
+        
+        # Store metrics in history
+        self.history['daily_metrics'][today] = metrics
+        return metrics
 
     def display_stats(self):
         node_info = self.get_node_info()
@@ -205,6 +239,21 @@ class QuilNodeMonitor:
         
         # Calculate landing rate from actual coins
         landing_rate = (coins / metrics['frames'] * 100) if metrics['frames'] > 0 else 0
+        
+        # Store landing rate
+        today = datetime.now().strftime('%Y-%m-%d')
+        self.history['landing_rates'][today] = {
+            'rate': landing_rate,
+            'coins': coins,
+            'frames': metrics['frames']
+        }
+        
+        # Get history and calculate averages
+        history = self.get_earnings_history(7)
+        valid_earnings = [earn for _, earn, _, _ in history if earn > 0]
+        daily_avg = sum(valid_earnings) / len(valid_earnings) if valid_earnings else 0
+        weekly_avg = daily_avg * 7
+        monthly_avg = daily_avg * 30
 
         print("\n=== QUIL Node Statistics ===")
         print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -215,6 +264,11 @@ class QuilNodeMonitor:
         print(f"Seniority: {node_info['seniority']}")
         print(f"QUIL Price: ${quil_price:.4f}")
         print(f"Balance: {node_info['owned_balance']:.6f} QUIL (${node_info['owned_balance'] * quil_price:.2f})")
+        
+        print(f"\nEarnings Averages:")
+        print(f"Daily Average:   {daily_avg:.6f} QUIL // ${daily_avg * quil_price:.2f}")
+        print(f"Weekly Average:  {weekly_avg:.6f} QUIL // ${weekly_avg * quil_price:.2f}")
+        print(f"Monthly Average: {monthly_avg:.6f} QUIL // ${monthly_avg * quil_price:.2f}")
         
         print(f"\nToday's Performance:")
         print(f"Earnings: {earnings:.6f} QUIL // ${earnings * quil_price:.2f}")
@@ -229,6 +283,11 @@ class QuilNodeMonitor:
         self._display_section("CPU Processing Time", 
                           metrics['cpu'], 
                           THRESHOLDS['cpu'])
+
+        print("\nHistory (Last 7 Days):")
+        for date, earnings, landing, balance in history:
+            print(f"{date}: {earnings:.6f} QUIL // ${earnings * quil_price:.2f} "
+                  f"(Landing: {landing['rate']:.2f}% - {landing['coins']}/{landing['frames']} frames)")
 
     def _display_section(self, title, stats, thresholds):
         print(f"\n{title}:")
