@@ -422,59 +422,59 @@ class QuilNodeMonitor:
             print(f"Error exporting CSV: {e}")
 
     def display_stats(self):
-    node_info = self.get_node_info()
-    if not node_info:
-        print("Failed to get node info")
-        return
-
-    # Get core data
-    self.process_logs()
-    metrics = self.metrics.get_stats()
-    quil_price = self.get_quil_price()
-    today_earnings = self.get_coin_data()
-    earnings_data = self.get_earnings_history(7)
+        node_info = self.get_node_info()
+        if not node_info:
+            print("Failed to get node info")
+            return
     
-    # Calculate averages properly
-    daily_avg = sum(earning for _, earning in earnings_data) / len(earnings_data) if earnings_data else 0
-    weekly_avg = daily_avg * 7
-    monthly_avg = daily_avg * 30
-
-    print("\n=== QUIL Node Statistics ===")
-    print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        # Get core data
+        self.process_logs()
+        metrics = self.metrics.get_stats()
+        quil_price = self.get_quil_price()
+        today_earnings = self.get_coin_data()
+        earnings_data = self.get_earnings_history(7)
+        
+        # Calculate averages properly
+        daily_avg = sum(earning for _, earning in earnings_data) / len(earnings_data) if earnings_data else 0
+        weekly_avg = daily_avg * 7
+        monthly_avg = daily_avg * 30
     
-    print(f"\nNode Information:")
-    print(f"Ring: {int(node_info['ring'])}")
-    print(f"Active Workers: {int(node_info['active_workers'])}")
-    print(f"Seniority: {int(node_info['seniority'])}")
-    print(f"QUIL Price: ${quil_price:.4f}")
-    print(f"Balance: {node_info['owned_balance']:.6f} QUIL (${node_info['owned_balance'] * quil_price:.2f})")
+        print("\n=== QUIL Node Statistics ===")
+        print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        print(f"\nNode Information:")
+        print(f"Ring: {int(node_info['ring'])}")
+        print(f"Active Workers: {int(node_info['active_workers'])}")
+        print(f"Seniority: {int(node_info['seniority'])}")
+        print(f"QUIL Price: ${quil_price:.4f}")
+        print(f"Balance: {node_info['owned_balance']:.6f} QUIL (${node_info['owned_balance'] * quil_price:.2f})")
+        
+        print(f"\nEarnings Averages:")
+        print(f"Daily Average:   {daily_avg:.6f} QUIL // ${daily_avg * quil_price:.2f}")
+        print(f"Weekly Average:  {weekly_avg:.6f} QUIL // ${weekly_avg * quil_price:.2f}")
+        print(f"Monthly Average: {monthly_avg:.6f} QUIL // ${monthly_avg * quil_price:.2f}")
+        
+        print(f"\nToday's Earnings: {today_earnings:.6f} QUIL // ${today_earnings * quil_price:.2f}")
+        
+        print(f"\nCurrent Performance:")
+        landing_rate = metrics['landing_rate']
+        print(f"Landing Rate: {landing_rate['rate']:.2f}% ({landing_rate['transactions']}/{landing_rate['frames']} frames)")
     
-    print(f"\nEarnings Averages:")
-    print(f"Daily Average:   {daily_avg:.6f} QUIL // ${daily_avg * quil_price:.2f}")
-    print(f"Weekly Average:  {weekly_avg:.6f} QUIL // ${weekly_avg * quil_price:.2f}")
-    print(f"Monthly Average: {monthly_avg:.6f} QUIL // ${monthly_avg * quil_price:.2f}")
+        self.display_processing_section("Creation Stage (Network Latency)", 
+                                     metrics['creation'], 
+                                     THRESHOLDS['creation'])
+        self.display_processing_section("Submission Stage (Total Time)", 
+                                     metrics['submission'], 
+                                     THRESHOLDS['submission'])
+        self.display_processing_section("CPU Processing Time", 
+                                     metrics['cpu'], 
+                                     THRESHOLDS['cpu'])
     
-    print(f"\nToday's Earnings: {today_earnings:.6f} QUIL // ${today_earnings * quil_price:.2f}")
-    
-    print(f"\nCurrent Performance:")
-    landing_rate = metrics['landing_rate']
-    print(f"Landing Rate: {landing_rate['rate']:.2f}% ({landing_rate['transactions']}/{landing_rate['frames']} frames)")
-
-    self.display_processing_section("Creation Stage (Network Latency)", 
-                                 metrics['creation'], 
-                                 THRESHOLDS['creation'])
-    self.display_processing_section("Submission Stage (Total Time)", 
-                                 metrics['submission'], 
-                                 THRESHOLDS['submission'])
-    self.display_processing_section("CPU Processing Time", 
-                                 metrics['cpu'], 
-                                 THRESHOLDS['cpu'])
-
-    print("\nHistory (Last 7 Days):")
-    for date, earnings in earnings_data:
-        rate_data = self.history.get('landing_rates', {}).get(date, {})
-        print(f"{date}: {earnings:.6f} QUIL // ${earnings * quil_price:.2f} "
-              f"(Landing Rate: {rate_data.get('rate', 0):.2f}%)")
+        print("\nHistory (Last 7 Days):")
+        for date, earnings in earnings_data:
+            rate_data = self.history.get('landing_rates', {}).get(date, {})
+            print(f"{date}: {earnings:.6f} QUIL // ${earnings * quil_price:.2f} "
+                  f"(Landing Rate: {rate_data.get('rate', 0):.2f}%)")
 
 def setup_telegram():
     print("\nTelegram Bot Setup:")
