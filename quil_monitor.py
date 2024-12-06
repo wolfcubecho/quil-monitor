@@ -332,35 +332,35 @@ class QuilNodeMonitor:
         return total_earnings
 
     def process_logs(self):
-    """Process today's logs with correct timestamp format"""
-    today = datetime.now().strftime('%Y-%m-%d')
-    cmd = f'journalctl -u ceremonyclient.service --since "{today} 00:00:00" -o json | grep -E "creating data shard ring proof|submitting data proof"'
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    
-    creation_data = {}
-    
-    for line in result.stdout.splitlines():
-        try:
-            entry = json.loads(line)
-            msg = entry.get('MESSAGE', '')
-            if not msg:
-                continue
+        """Process today's logs with correct timestamp format"""
+        today = datetime.now().strftime('%Y-%m-%d')
+        cmd = f'journalctl -u ceremonyclient.service --since "{today} 00:00:00" -o json | grep -E "creating data shard ring proof|submitting data proof"'
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        
+        creation_data = {}
+        
+        for line in result.stdout.splitlines():
+            try:
+                entry = json.loads(line)
+                msg = entry.get('MESSAGE', '')
+                if not msg:
+                    continue
+                    
+                msg_data = json.loads(msg)
+                frame_number = msg_data.get('frame_number')
+                frame_age = float(msg_data.get('frame_age', 0))
                 
-            msg_data = json.loads(msg)
-            frame_number = msg_data.get('frame_number')
-            frame_age = float(msg_data.get('frame_age', 0))
-            
-            if "creating data shard ring proof" in msg:
-                creation_data[frame_number] = frame_age
-                self.metrics.add_creation(frame_age)
-            elif "submitting data proof" in msg:
-                if frame_number in creation_data:
-                    cpu_time = frame_age - creation_data[frame_number]
-                    if cpu_time > 0:
-                        self.metrics.add_cpu_time(cpu_time)
-                self.metrics.add_submission(frame_age)
-        except:
-            continue
+                if "creating data shard ring proof" in msg:
+                    creation_data[frame_number] = frame_age
+                    self.metrics.add_creation(frame_age)
+                elif "submitting data proof" in msg:
+                    if frame_number in creation_data:
+                        cpu_time = frame_age - creation_data[frame_number]
+                        if cpu_time > 0:
+                            self.metrics.add_cpu_time(cpu_time)
+                    self.metrics.add_submission(frame_age)
+            except:
+                continue
 
     def get_earnings_history(self, days=7):
         earnings_data = []
