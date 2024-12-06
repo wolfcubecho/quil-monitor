@@ -62,12 +62,14 @@ class QuilNodeMonitor:
                 return self._init_history()
         return self._init_history()
         
-    def _init_history(self):
-        return {
-            'daily_metrics': {},
-            'daily_earnings': {},
-            'daily_balance': {}
-        }
+   def _init_history(self):
+    return {
+        'daily_metrics': {},
+        'daily_earnings': {},
+        'daily_balance': {},
+        'landing_rates': {},
+        'daily_totals': {}  # For storing combined daily stats
+    }
 
     def _save_history(self):
         with open(self.history_file, 'w') as f:
@@ -144,6 +146,52 @@ class QuilNodeMonitor:
             'avg_time': sum(times)/total if total > 0 else 0
         }
 
+    def get_landing_rate(self):
+        """Calculate landing rate based on actual coin transactions"""
+        today = datetime.now().strftime('%Y-%m-%d')
+        
+        # Get coin transactions
+        result = subprocess.run(
+            [self.qclient_binary, 'token', 'coins', 'metadata', '--public-rpc'],
+            capture_output=True, text=True
+        )
+        
+        transactions = 0
+        earnings = 0
+        for line in result.stdout.splitlines():
+            if 'Timestamp' in line and today in line and 'QUIL' in line:
+                amount_match = re.search(r'([\d.]+)\s*QUIL', line)
+                if amount_match:
+                    amount = float(amount_match.group(1))
+                    if amount <= 30:  # Only count mining rewards
+                        transactions += 1
+                        earnings += amount
+        
+        # Get total frames created today
+        cmd = "journalctl -u ceremonyclient.service --since today --no-hostname | grep 'creating data shard ring proof' | wc -l"
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        frames = int(result.stdout.strip())
+        
+        rate = (transactions / frames * 100) if frames > 0 else 0
+        
+        # Store in history if it's end of day
+        current_time = datetime.now()
+        if current_time.hour == 23 and current_time.minute >= 55:
+            self.history['landing_rates'][today] = {
+                'rate': rate,
+                'transactions': transactions,
+                'frames': frames,
+                'earnings': earnings
+            }
+            self._save_history()
+        
+        return {
+            'rate': rate,
+            'transactions': transactions,
+            'frames': frames,
+            'earnings': earnings
+        }
+       
     def get_coin_data(self):
         """Get today's earnings data"""
         today = datetime.now().strftime('%Y-%m-%d')
@@ -176,13 +224,24 @@ class QuilNodeMonitor:
         return total_earnings
 
     def get_earnings_history(self, days=7):
+        """Get historical earnings with landing rates"""
         earnings_data = []
         today = datetime.now().date()
+        quil_price = self.get_quil_price()
         
         for i in range(days):
             date = (today - timedelta(days=i)).strftime('%Y-%m-%d')
             earnings = self.history.get('daily_earnings', {}).get(date, 0)
-            earnings_data.append((date, earnings))
+            landing_data = self.history.get('landing_rates', {}).get(date, {})
+            
+            earnings_data.append({
+                'date': date,
+                'earnings': earnings,
+                'usd_value': earnings * quil_price,
+                'landing_rate': landing_data.get('rate', 0),
+                'transactions': landing_data.get('transactions', 0),
+                'frames': landing_data.get('frames', 0)
+            })
         
         return earnings_data
 
@@ -246,21 +305,23 @@ class QuilNodeMonitor:
         if not metrics:
             print("No data available")
             return
-
+    
         node_info = self.get_node_info()
         if not node_info:
             print("Failed to get node info")
             return
-
+    
         quil_price = self.get_quil_price()
         today_earnings = self.get_coin_data()
-        earnings_data = self.get_earnings_history(7)
+        landing_rate = self.get_landing_rate()
+        earnings_history = self.get_earnings_history(7)
         
         # Calculate averages
-        daily_avg = sum(earning for _, earning in earnings_data) / len(earnings_data) if earnings_data else 0
+        valid_earnings = [e['earnings'] for e in earnings_history if e['earnings'] > 0]
+        daily_avg = sum(valid_earnings) / len(valid_earnings) if valid_earnings else 0
         weekly_avg = daily_avg * 7
         monthly_avg = daily_avg * 30
-
+    
         print("\n=== QUIL Node Statistics ===")
         print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         
@@ -276,41 +337,25 @@ class QuilNodeMonitor:
         print(f"Weekly Average:  {weekly_avg:.6f} QUIL // ${weekly_avg * quil_price:.2f}")
         print(f"Monthly Average: {monthly_avg:.6f} QUIL // ${monthly_avg * quil_price:.2f}")
         
-        print(f"\nToday's Earnings: {today_earnings:.6f} QUIL // ${today_earnings * quil_price:.2f}")
+        print(f"\nToday's Earnings: {landing_rate['earnings']:.6f} QUIL // ${landing_rate['earnings'] * quil_price:.2f}")
         
-        landing = metrics['landing_rate']
         print(f"\nCurrent Performance:")
-        print(f"Landing Rate: {landing['rate']:.2f}% ({landing['transactions']}/{landing['frames']} frames)")
-
+        print(f"Landing Rate: {landing_rate['rate']:.2f}% ({landing_rate['transactions']}/{landing_rate['frames']} frames)")
+    
         self._display_section("Creation Stage (Network Latency)", 
-                          metrics['creation'], 
-                          THRESHOLDS['creation'])
+                             metrics['creation'], 
+                             THRESHOLDS['creation'])
         self._display_section("Submission Stage (Total Time)", 
-                          metrics['submission'], 
-                          THRESHOLDS['submission'])
+                             metrics['submission'], 
+                             THRESHOLDS['submission'])
         self._display_section("CPU Processing Time", 
-                          metrics['cpu'], 
-                          THRESHOLDS['cpu'])
-
+                             metrics['cpu'], 
+                             THRESHOLDS['cpu'])
+    
         print("\nHistory (Last 7 Days):")
-        for date, earnings in earnings_data:
-            print(f"{date}: {earnings:.6f} QUIL // ${earnings * quil_price:.2f}")
-
-    def _display_section(self, title, stats, thresholds):
-        print(f"\n{title}:")
-        print(f"  Total Proofs:    {stats['total']}")
-        print(f"  Average Time:    {stats['avg_time']:.2f}s")
-        
-        good_color = COLORS['green'] if stats['good_pct'] > 50 else COLORS['reset']
-        warning_color = COLORS['yellow'] if stats['warning_pct'] > 50 else COLORS['reset']
-        critical_color = COLORS['red'] if stats['critical_pct'] > 50 else COLORS['reset']
-
-        print(f"  0-{thresholds['good']}s:         "
-              f"{good_color}{stats['good']} proofs ({stats['good_pct']:.1f}%){COLORS['reset']}")
-        print(f"  {thresholds['good']}-{thresholds['warning']}s:     "
-              f"{warning_color}{stats['warning']} proofs ({stats['warning_pct']:.1f}%){COLORS['reset']}")
-        print(f"  >{thresholds['warning']}s:         "
-              f"{critical_color}{stats['critical']} proofs ({stats['critical_pct']:.1f}%){COLORS['reset']}")
+        for entry in earnings_history:
+            print(f"{entry['date']}: {entry['earnings']:.6f} QUIL // ${entry['usd_value']:.2f} "
+                  f"(Landing: {entry['landing_rate']:.2f}% - {entry['transactions']}/{entry['frames']} frames)")
 
 def main():
     if os.geteuid() != 0:
