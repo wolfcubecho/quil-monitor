@@ -63,21 +63,21 @@ class QuilNodeMonitor:
         return self._init_history()
         
     def _get_latest_node_binary(self):
-    """Get latest node binary using same method as bash script"""
-    try:
-        home = os.path.expanduser('~')
-        node_dir = f"{home}/ceremonyclient/node"
-        cmd = f'find "{node_dir}" -type f -executable -name "node-*" ! -name "*.dgst*" ! -name "*.sig*" | sort -V | tail -n 1'
-        
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        if result.returncode != 0 or not result.stdout.strip():
-            raise Exception("No node binary found")
+        """Get latest node binary using same method as bash script"""
+        try:
+            home = os.path.expanduser('~')
+            node_dir = f"{home}/ceremonyclient/node"
+            cmd = f'find "{node_dir}" -type f -executable -name "node-*" ! -name "*.dgst*" ! -name "*.sig*" | sort -V | tail -n 1'
             
-        binary = result.stdout.strip()
-        return binary
-    except Exception as e:
-        print(f"Error finding node binary: {e}")
-        sys.exit(1)
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            if result.returncode != 0 or not result.stdout.strip():
+                raise Exception("No node binary found")
+                
+            binary = result.stdout.strip()
+            return binary
+        except Exception as e:
+            print(f"Error finding node binary: {e}")
+            sys.exit(1)
 
     def _get_latest_qclient_binary(self):
         """Get latest qclient binary using same method as bash script"""
