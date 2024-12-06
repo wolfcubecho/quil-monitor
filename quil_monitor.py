@@ -297,7 +297,7 @@ class QuilNodeMonitor:
             'submitted': len(transactions)
         }
         
-       def get_quil_price(self):
+    def get_quil_price(self):
             try:
                 response = requests.get(
                     "https://api.coingecko.com/api/v3/simple/price",
