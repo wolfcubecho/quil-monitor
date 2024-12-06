@@ -215,10 +215,9 @@ class QuilNodeMonitor:
         self.history_file = "quil_history.json"
         self.history = self._load_history()
         self.metrics = ProcessingMetrics()
-        self.node_binary = self._get_latest_node_binary()
-        self.qclient_binary = self._get_latest_qclient_binary()
+        self.node_binary = self._get_latest_binary('node')
+        self.qclient_binary = self._get_latest_binary('qclient')
         self.telegram = TelegramNotifier(TELEGRAM_CONFIG)
-        self._last_log_check = None
 
     def _get_latest_node_binary(self):
         try:
@@ -263,12 +262,12 @@ class QuilNodeMonitor:
 
     def _init_history(self):
         return {
-            'daily_balance': {},
-            'daily_earnings': {},
-            'last_log_timestamp': None
+            'metrics': {},
+            'earnings': {},
+            'daily_balance': {}
         }
 
-    def _save_history(self):
+   def _save_history(self):
         with open(self.history_file, 'w') as f:
             json.dump(self.history, f, indent=2)
 
@@ -346,60 +345,61 @@ class QuilNodeMonitor:
         return total_earnings
 
     def process_logs(self):
-    """Process only new logs, store at midnight"""
-    # Check if we need to store yesterday's data
-    current_time = datetime.now()
-    current_date = current_time.strftime('%Y-%m-%d')
-    
-    # If it's a new day and we haven't stored yesterday's data
-    if current_date != self.metrics.current_date:
-        # Store yesterday's metrics in history
-        yesterday = (current_time - timedelta(days=1)).strftime('%Y-%m-%d')
-        self.history['metrics'][yesterday] = {
-            'creation': self.metrics.calculate_stats(self.metrics.creation_times, THRESHOLDS['creation']),
-            'submission': self.metrics.calculate_stats(self.metrics.submission_times, THRESHOLDS['submission']),
-            'cpu': self.metrics.calculate_stats(self.metrics.cpu_times, THRESHOLDS['cpu']),
-            'landing_rate': self.metrics.calculate_landing_rate()
-        }
-        self.history['earnings'][yesterday] = self.history.get('daily_earnings', {}).get(yesterday, 0)
-        self._save_history()
+        """Process only new logs, store at midnight"""
+        # Check if we need to store yesterday's data
+        current_time = datetime.now()
+        current_date = current_time.strftime('%Y-%m-%d')
         
-        # Reset metrics for new day
-        self.metrics.reset_for_new_day(current_date)
+        # If it's a new day and we haven't stored yesterday's data
+        if current_date != self.metrics.current_date:
+            # Store yesterday's metrics in history
+            yesterday = (current_time - timedelta(days=1)).strftime('%Y-%m-%d')
+            self.history['metrics'][yesterday] = {
+                'creation': self.metrics.calculate_stats(self.metrics.creation_times, THRESHOLDS['creation']),
+                'submission': self.metrics.calculate_stats(self.metrics.submission_times, THRESHOLDS['submission']),
+                'cpu': self.metrics.calculate_stats(self.metrics.cpu_times, THRESHOLDS['cpu']),
+                'landing_rate': self.metrics.calculate_landing_rate()
+            }
+            self.history['earnings'][yesterday] = self.history.get('daily_earnings', {}).get(yesterday, 0)
+            self._save_history()
+            
+            # Reset metrics for new day
+            self.metrics.reset_for_new_day(current_date)
 
-    # Process new logs since last check
-    last_timestamp = self.metrics.last_processed_time or f"{current_date} 00:00:00"
-    cmd = f"""journalctl -u ceremonyclient.service --since '{last_timestamp}' -o json-pretty | grep -E 'creating data shard ring proof|submitting data proof'"""
-    
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    
-    for line in result.stdout.splitlines():
-        try:
-            entry = json.loads(line)
-            msg = entry.get('MESSAGE', '')
-            if not msg:
-                continue
+        # Process new logs since last check
+        last_timestamp = self.metrics.last_processed_time or f"{current_date} 00:00:00"
+        cmd = f"""journalctl -u ceremonyclient.service --since '{last_timestamp}' -o json-pretty | grep -E 'creating data shard ring proof|submitting data proof'"""
+        
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        
+        for line in result.stdout.splitlines():
+            try:
+                entry = json.loads(line)
+                msg = entry.get('MESSAGE', '')
+                if not msg:
+                    continue
+                    
+                msg_data = json.loads(msg)
+                frame_number = msg_data.get('frame_number')
+                frame_age = float(msg_data.get('frame_age', 0))
+                timestamp = entry.get('__REALTIME_TIMESTAMP')
                 
-            msg_data = json.loads(msg)
-            frame_number = msg_data.get('frame_number')
-            frame_age = float(msg_data.get('frame_age', 0))
-            timestamp = entry.get('__REALTIME_TIMESTAMP')
-            
-            if timestamp:
-                self.metrics.last_processed_time = timestamp
-            
-            if "creating data shard ring proof" in msg:
-                self.metrics.add_creation(frame_age)
-                self.metrics.frames.add(frame_number)
-            elif "submitting data proof" in msg:
-                creation_time = self.metrics.creation_times_by_frame.get(frame_number)
-                if creation_time is not None:
-                    cpu_time = frame_age - creation_time
-                    self.metrics.add_cpu_time(cpu_time)
-                self.metrics.add_submission(frame_age)
-                self.metrics.transactions.add(frame_number)
-        except Exception as e:
-            continue
+                if timestamp:
+                    self.metrics.last_processed_time = timestamp
+                
+                if "creating data shard ring proof" in msg:
+                    self.metrics.add_creation(frame_age)
+                    self.metrics.frames.add(frame_number)
+                    self.metrics.creation_times_by_frame[frame_number] = frame_age
+                elif "submitting data proof" in msg:
+                    creation_time = self.metrics.creation_times_by_frame.get(frame_number)
+                    if creation_time is not None:
+                        cpu_time = frame_age - creation_time
+                        self.metrics.add_cpu_time(cpu_time)
+                    self.metrics.add_submission(frame_age)
+                    self.metrics.transactions.add(frame_number)
+            except Exception as e:
+                continue
 
     def get_earnings_history(self, days=7):
         earnings_data = []
